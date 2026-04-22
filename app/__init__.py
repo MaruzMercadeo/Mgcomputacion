@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from flask import Flask, render_template
@@ -12,6 +13,16 @@ from .extensions import db, login_manager, migrate
 def create_app(config_class=Config):
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_object(config_class)
+
+    if not app.config.get("SECRET_KEY"):
+        if os.getenv("FLASK_DEBUG", "").lower() in ("1", "true", "yes"):
+            app.config["SECRET_KEY"] = "dev-secret-change-me"
+        else:
+            raise RuntimeError(
+                "SECRET_KEY env var is required when FLASK_DEBUG is not enabled. "
+                "Generate one with: "
+                "python -c \"import secrets; print(secrets.token_hex(32))\""
+            )
 
     Path(app.config["PRODUCT_UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
     Path(app.config["PDF_UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
