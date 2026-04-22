@@ -6,6 +6,7 @@ __pycache__/
 .instance
 .env
 instance/*.db
+logs/
 app/static/uploads/products/*
 app/static/uploads/pdfs/*
 !app/static/uploads/products/.gitkeep

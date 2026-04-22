@@ -39,6 +39,28 @@ La app quedará en:
 
 - http://127.0.0.1:5555
 
+### 2.1 Autoarranque al iniciar Windows (opcional)
+
+Para que la app levante sola cada vez que inicias sesión en Windows (útil para desarrollo continuo sin tener que tipear `flask run` a mano):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1
+```
+
+Esto crea un shortcut en la carpeta de inicio (`shell:startup`) que ejecuta `scripts\start_server.vbs`. El wrapper `.vbs` lanza `scripts\start_server.bat` **sin ventana de consola visible**, activa el venv y corre `flask run`.
+
+Logs de la app van a `logs\flask.log`.
+
+Para quitar el autoarranque:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\uninstall_autostart.ps1
+```
+
+**Requisitos previos**: `venv\` y `requirements.txt` ya instalados. El script copia `.env.example` a `.env` si no existe.
+
+**Importante**: el autoarranque solo levanta la app cuando la PC está encendida y con sesión iniciada. Si apagas la PC, la app se apaga con ella. Para 24/7 real, desplegar en un VPS (ver sección 10).
+
 ## 3. Instalación local (Ubuntu)
 
 ```bash
