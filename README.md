@@ -37,7 +37,7 @@ flask --app run.py run
 
 La app quedará en:
 
-- http://127.0.0.1:5000
+- http://127.0.0.1:5555
 
 ## 3. Instalación local (Ubuntu)
 
@@ -48,7 +48,7 @@ pip install -r requirements.txt
 cp .env.example .env
 flask --app run.py init-db
 flask --app run.py seed-admin --email admin@mg.local --password Admin123! --name "Administrador"
-flask --app run.py run --host 0.0.0.0 --port 5000
+flask --app run.py run --host 0.0.0.0 --port 5555
 ```
 
 ## 4. Usuario administrador
