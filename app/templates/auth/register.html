@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+{% block title %}Registro | MGComputacion{% endblock %}
+{% block content %}
+<section class="simple-shell">
+  <div class="container narrow">
+    <div class="panel">
+      <div class="section-header">
+        <h1>Crear cuenta</h1>
+        <p>Tu cuenta quedará pendiente hasta que un administrador la autorice.</p>
+      </div>
+
+      <form method="post" class="form-grid two-columns">
+        <label>
+          <span>Nombre del responsable</span>
+          <input type="text" name="name" required>
+        </label>
+
+        <label>
+          <span>Nombre de la compañía</span>
+          <input type="text" name="company_name" required>
+        </label>
+
+        <label class="span-2">
+          <span>Correo electrónico</span>
+          <input type="email" name="email" required>
+        </label>
+
+        <label>
+          <span>Contraseña</span>
+          <input type="password" name="password" required>
+        </label>
+
+        <label>
+          <span>Confirmar contraseña</span>
+          <input type="password" name="confirm_password" required>
+        </label>
+
+        <div class="span-2">
+          <button class="btn btn-primary" type="submit">Crear cuenta</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+{% block title %}Catalogo | MGComputacion{% endblock %}
+{% block content %}
+<section class="dashboard-shell container">
+  <div class="dashboard-grid">
+    {% include 'dashboard/_sidebar.html' %}
+    <div class="dashboard-main">
+      <div class="panel">
+        <div class="section-header">
+          <div>
+            <h1>Catalogo</h1>
+            <p>Vista de productos activos listos para compartir con clientes o agentes.</p>
+          </div>
+          <a href="{{ url_for('dashboard.product_create') }}" class="btn btn-primary">Nuevo producto</a>
+        </div>
+
+        <div class="catalog-grid">
+          {% for product in products %}
+          <article class="catalog-card">
+            <div class="catalog-image">
+              {% if product.image_path %}
+                <img src="{{ url_for('static', filename=product.image_path) }}" alt="{{ product.name }}">
+              {% else %}
+                <span>Sin imagen</span>
+              {% endif %}
+            </div>
+            <div class="catalog-body">
+              <div class="catalog-meta">
+                <span>{{ product.primary_category.name if product.primary_category else 'Sin categoria' }}</span>
+                {% if product.secondary_category %}
+                  <span>{{ product.secondary_category.name }}</span>
+                {% endif %}
+              </div>
+              <h2>{{ product.name }}</h2>
+              <p>{{ product.description or 'Producto sin descripcion.' }}</p>
+              <div class="catalog-footer">
+                <strong>${{ '%.2f'|format(product.price) }}</strong>
+                <span>Stock: {{ product.stock }}</span>
+              </div>
+            </div>
+          </article>
+          {% else %}
+          <div class="empty-state">
+            <h2>Todavia no hay productos activos.</h2>
+            <p>Crea un producto y marcalo como activo para verlo en el catalogo.</p>
+            <a href="{{ url_for('dashboard.product_create') }}" class="btn btn-primary">Crear producto</a>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

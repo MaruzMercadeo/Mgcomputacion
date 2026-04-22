@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+{% block title %}Categorías | MGComputacion{% endblock %}
+{% block content %}
+<section class="dashboard-shell container">
+  <div class="dashboard-grid">
+    {% include 'dashboard/_sidebar.html' %}
+    <div class="dashboard-main">
+      <div class="panel">
+        <div class="section-header">
+          <h1>Categorías</h1>
+          <p>Crea categorías principales y secundarias.</p>
+        </div>
+
+        <form method="post" class="form-grid two-columns compact-form">
+          <label>
+            <span>Nombre</span>
+            <input type="text" name="name" required>
+          </label>
+
+          <label>
+            <span>Padre (opcional)</span>
+            <select name="parent_id">
+              <option value="">Categoría principal</option>
+              {% for category in primary_categories %}
+              <option value="{{ category.id }}">{{ category.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+
+          <div class="span-2">
+            <button class="btn btn-primary" type="submit">Crear categoría</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="panel">
+        <div class="section-header compact">
+          <h2>Listado</h2>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Tipo</th>
+                <th>Padre</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for category in all_categories %}
+              <tr>
+                <td>{{ category.name }}</td>
+                <td>{{ 'Secundaria' if category.parent_id else 'Principal' }}</td>
+                <td>{{ category.parent.name if category.parent else '-' }}</td>
+                <td class="actions-cell">
+                  <form method="post" action="{{ url_for('dashboard.delete_category', category_id=category.id) }}" class="inline-form" onsubmit="return confirm('¿Eliminar categoría?');">
+                    <button class="btn btn-danger btn-xs">Eliminar</button>
+                  </form>
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="4">No hay categorías todavía.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+{% block title %}Agente IA | MGComputacion{% endblock %}
+{% block content %}
+<section class="dashboard-shell container">
+  <div class="dashboard-grid">
+    {% include 'dashboard/_sidebar.html' %}
+    <div class="dashboard-main">
+      <div class="panel">
+        <div class="section-header">
+          <h1>Configuración del agente IA</h1>
+          <p>Estos datos serán consultados por los agentes que integren esta empresa.</p>
+        </div>
+
+        <form method="post" class="form-grid two-columns">
+          <label>
+            <span>Nombre del agente</span>
+            <input type="text" name="agent_name" value="{{ settings.agent_name or '' }}">
+          </label>
+
+          <label>
+            <span>Tono</span>
+            <input type="text" name="tone" value="{{ settings.tone or '' }}" placeholder="profesional, cercano, técnico...">
+          </label>
+
+          <label class="span-2">
+            <span>Instrucciones generales</span>
+            <textarea name="system_instructions" rows="5">{{ settings.system_instructions or '' }}</textarea>
+          </label>
+
+          <label class="span-2">
+            <span>Comportamiento comercial</span>
+            <textarea name="sales_behavior" rows="4">{{ settings.sales_behavior or '' }}</textarea>
+          </label>
+
+          <label class="span-2">
+            <span>Reglas de soporte</span>
+            <textarea name="support_rules" rows="4">{{ settings.support_rules or '' }}</textarea>
+          </label>
+
+          <label class="span-2">
+            <span>Contexto de negocio</span>
+            <textarea name="business_context" rows="4">{{ settings.business_context or '' }}</textarea>
+          </label>
+
+          <label class="span-2">
+            <span>Estilo de respuesta</span>
+            <textarea name="response_style" rows="4">{{ settings.response_style or '' }}</textarea>
+          </label>
+
+          <div class="span-2">
+            <button class="btn btn-primary" type="submit">Guardar configuración</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}MGComputacion{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container nav-shell">
+      <a href="{{ url_for('main.index') }}" class="brand-link">
+        <img src="{{ url_for('static', filename='img/logo-mg.png') }}" alt="MGComputacion" class="brand-logo">
+      </a>
+
+      <nav class="nav-links">
+        {% if current_user.is_authenticated %}
+          {% if current_user.is_admin %}
+            <a href="{{ url_for('admin.dashboard') }}">Admin</a>
+            <a href="{{ url_for('admin.users') }}">Usuarios</a>
+          {% else %}
+            <a href="{{ url_for('dashboard.index') }}">Panel</a>
+            <a href="{{ url_for('dashboard.catalog') }}">Catalogo</a>
+            <a href="{{ url_for('dashboard.products') }}">Productos</a>
+            <a href="{{ url_for('dashboard.company') }}">Empresa</a>
+            <a href="{{ url_for('dashboard.agent_settings') }}">Agente IA</a>
+          {% endif %}
+          <form action="{{ url_for('auth.logout') }}" method="post" class="inline-form">
+            <button class="btn btn-ghost" type="submit">Salir</button>
+          </form>
+        {% else %}
+          <a href="{{ url_for('main.index') }}">Inicio</a>
+          <a href="{{ url_for('auth.login') }}">Iniciar sesión</a>
+          <a href="{{ url_for('auth.register') }}" class="btn btn-primary">Crear cuenta</a>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      {% include 'partials/_flash.html' %}
+    </div>
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

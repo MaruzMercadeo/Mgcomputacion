@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+{% block title %}Inicio | MGComputacion{% endblock %}
+{% block content %}
+<section class="hero-shell container">
+  <div class="hero-grid">
+    <div class="hero-left">
+      <span class="eyebrow">PLATAFORMA BASE PARA CLIENTES + AGENTES IA</span>
+      <h1>Tecnología que impulsa el futuro y convierte tu información en acciones inteligentes.</h1>
+      <p>
+        Administra clientes, productos, categorías, comportamiento del agente IA y documentos PDF
+        desde una sola plataforma. Cada empresa queda aislada con sus propios datos.
+      </p>
+
+      <div class="hero-actions">
+        <a href="{{ url_for('auth.register') }}" class="btn btn-primary">Crear cuenta</a>
+        <a href="{{ url_for('auth.login') }}" class="btn btn-secondary">Entrar</a>
+      </div>
+
+      <div class="feature-row">
+        <div class="feature-card">
+          <h3>Seguridad</h3>
+          <p>Acceso por roles, aprobación manual y separación por empresa.</p>
+        </div>
+        <div class="feature-card">
+          <h3>Catálogo</h3>
+          <p>Productos, categorías y configuración empresarial por cliente.</p>
+        </div>
+        <div class="feature-card">
+          <h3>API IA</h3>
+          <p>Endpoints listos para conectar agentes y automatizaciones.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="hero-right">
+      <div class="glass-card">
+        <h2>Lo que incluye esta base</h2>
+        <ul class="check-list">
+          <li>Registro y aprobación manual</li>
+          <li>Dashboard cliente y dashboard admin</li>
+          <li>Empresa por cliente</li>
+          <li>Productos + categorías principales/secundarias</li>
+          <li>Agent settings por empresa</li>
+          <li>Upload y preview básico de PDF</li>
+          <li>API Key para agentes externos</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

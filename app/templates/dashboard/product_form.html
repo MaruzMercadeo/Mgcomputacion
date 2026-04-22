@@ -1,0 +1,83 @@
+{% extends 'base.html' %}
+{% block title %}{{ 'Editar' if product else 'Nuevo' }} producto | MGComputacion{% endblock %}
+{% block content %}
+<section class="dashboard-shell container">
+  <div class="dashboard-grid">
+    {% include 'dashboard/_sidebar.html' %}
+    <div class="dashboard-main">
+      <div class="panel">
+        <div class="section-header">
+          <h1>{{ 'Editar producto' if product else 'Crear producto' }}</h1>
+          <p>Completa los datos del producto.</p>
+        </div>
+
+        <form method="post" enctype="multipart/form-data" class="form-grid two-columns">
+          <label class="span-2">
+            <span>Nombre</span>
+            <input type="text" name="name" value="{{ product.name if product else '' }}" required>
+          </label>
+
+          <label>
+            <span>Precio</span>
+            <input type="number" step="0.01" name="price" value="{{ product.price if product else '0.00' }}" required>
+          </label>
+
+          <label>
+            <span>Stock</span>
+            <input type="number" name="stock" value="{{ product.stock if product else 0 }}" required>
+          </label>
+
+          <label>
+            <span>SKU</span>
+            <input type="text" name="sku" value="{{ product.sku if product else '' }}">
+          </label>
+
+          <label>
+            <span>Categoría principal</span>
+            <select name="category_id">
+              <option value="">Selecciona</option>
+              {% for category in primary_categories %}
+              <option value="{{ category.id }}" {% if product and product.category_id == category.id %}selected{% endif %}>
+                {{ category.name }}
+              </option>
+              {% endfor %}
+            </select>
+          </label>
+
+          <label>
+            <span>Categoría secundaria</span>
+            <select name="subcategory_id">
+              <option value="">Selecciona</option>
+              {% for category in secondary_categories %}
+              <option value="{{ category.id }}" {% if product and product.subcategory_id == category.id %}selected{% endif %}>
+                {{ category.name }}
+              </option>
+              {% endfor %}
+            </select>
+          </label>
+
+          <label>
+            <span>Imagen</span>
+            <input type="file" name="image" accept=".png,.jpg,.jpeg,.webp,.gif">
+          </label>
+
+          <label class="checkbox top-gap">
+            <input type="checkbox" name="is_active" {% if not product or product.is_active %}checked{% endif %}>
+            <span>Producto activo</span>
+          </label>
+
+          <label class="span-2">
+            <span>Descripción</span>
+            <textarea name="description" rows="6">{{ product.description if product else '' }}</textarea>
+          </label>
+
+          <div class="span-2 form-actions">
+            <a href="{{ url_for('dashboard.products') }}" class="btn btn-secondary">Cancelar</a>
+            <button class="btn btn-primary" type="submit">{{ 'Guardar cambios' if product else 'Crear producto' }}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

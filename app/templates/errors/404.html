@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% block title %}404 | No encontrado{% endblock %}
+{% block content %}
+<section class="simple-shell">
+  <div class="container narrow">
+    <div class="panel center-panel">
+      <h1>404</h1>
+      <p>La página que buscas no existe.</p>
+      <a href="{{ url_for('main.index') }}" class="btn btn-secondary">Volver al inicio</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

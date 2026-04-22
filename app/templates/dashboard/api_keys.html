@@ -1,0 +1,77 @@
+{% extends 'base.html' %}
+{% block title %}API Keys | MGComputacion{% endblock %}
+{% block content %}
+<section class="dashboard-shell container">
+  <div class="dashboard-grid">
+    {% include 'dashboard/_sidebar.html' %}
+    <div class="dashboard-main">
+      <div class="panel">
+        <div class="section-header">
+          <h1>API Keys</h1>
+          <p>Usa estas claves para conectar agentes o integraciones externas.</p>
+        </div>
+
+        {% if plain_key %}
+        <div class="secret-box">
+          <strong>Copia tu nueva API key ahora:</strong>
+          <code>{{ plain_key }}</code>
+        </div>
+        {% endif %}
+
+        <form method="post" class="form-grid compact-form">
+          <label>
+            <span>Etiqueta</span>
+            <input type="text" name="label" placeholder="openclaw / integracion-1 / agente-ventas" required>
+          </label>
+          <div>
+            <button class="btn btn-primary" type="submit">Generar API key</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="panel">
+        <div class="section-header compact">
+          <h2>Claves existentes</h2>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Etiqueta</th>
+                <th>Últimos 4</th>
+                <th>Estado</th>
+                <th>Último uso</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for key in keys %}
+              <tr>
+                <td>{{ key.label }}</td>
+                <td>****{{ key.last_four }}</td>
+                <td><span class="status-badge status-{{ 'approved' if key.is_active else 'disabled' }}">{{ 'activa' if key.is_active else 'revocada' }}</span></td>
+                <td>{{ key.last_used_at.strftime('%Y-%m-%d %H:%M') if key.last_used_at else '-' }}</td>
+                <td class="actions-cell">
+                  {% if key.is_active %}
+                  <form method="post" action="{{ url_for('dashboard.revoke_api_key', key_id=key.id) }}" class="inline-form" onsubmit="return confirm('¿Revocar API key?');">
+                    <button class="btn btn-danger btn-xs">Revocar</button>
+                  </form>
+                  {% else %}
+                  <span class="muted">—</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="5">No hay API keys creadas.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block title %}Admin | MGComputacion{% endblock %}
+{% block content %}
+<section class="dashboard-shell container">
+  <div class="section-header">
+    <h1>Panel administrativo</h1>
+    <p>Vista general del sistema.</p>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card"><span>Total usuarios</span><strong>{{ stats.users_total }}</strong></div>
+    <div class="stat-card"><span>Usuarios pendientes</span><strong>{{ stats.users_pending }}</strong></div>
+    <div class="stat-card"><span>Empresas</span><strong>{{ stats.companies_total }}</strong></div>
+    <div class="stat-card"><span>Productos</span><strong>{{ stats.products_total }}</strong></div>
+  </div>
+
+  <div class="panel">
+    <div class="section-header compact">
+      <h2>Usuarios recientes</h2>
+      <a href="{{ url_for('admin.users') }}">Ver todos</a>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Nombre</th>
+            <th>Email</th>
+            <th>Estado</th>
+            <th>Rol</th>
+            <th>Empresa</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for user in recent_users %}
+          <tr>
+            <td>{{ user.name }}</td>
+            <td>{{ user.email }}</td>
+            <td><span class="status-badge status-{{ user.status }}">{{ user.status }}</span></td>
+            <td>{{ user.role }}</td>
+            <td>{{ user.company.company_name if user.company else '-' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endblock %}

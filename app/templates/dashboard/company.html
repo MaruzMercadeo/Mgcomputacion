@@ -1,0 +1,53 @@
+{% extends 'base.html' %}
+{% block title %}Mi empresa | MGComputacion{% endblock %}
+{% block content %}
+<section class="dashboard-shell container">
+  <div class="dashboard-grid">
+    {% include 'dashboard/_sidebar.html' %}
+    <div class="dashboard-main">
+      <div class="panel">
+        <div class="section-header">
+          <h1>Datos de empresa</h1>
+          <p>Información que también podrá consultar el agente IA.</p>
+        </div>
+
+        <form method="post" class="form-grid two-columns">
+          <label>
+            <span>Nombre de compañía</span>
+            <input type="text" name="company_name" value="{{ company.company_name or '' }}" required>
+          </label>
+
+          <label>
+            <span>Email de empresa</span>
+            <input type="email" name="company_email" value="{{ company.company_email or '' }}">
+          </label>
+
+          <label>
+            <span>Teléfono</span>
+            <input type="text" name="phone" value="{{ company.phone or '' }}">
+          </label>
+
+          <label>
+            <span>Sitio web</span>
+            <input type="text" name="website" value="{{ company.website or '' }}">
+          </label>
+
+          <label class="span-2">
+            <span>Dirección</span>
+            <input type="text" name="address" value="{{ company.address or '' }}">
+          </label>
+
+          <label class="span-2">
+            <span>Descripción</span>
+            <textarea name="description" rows="5">{{ company.description or '' }}</textarea>
+          </label>
+
+          <div class="span-2">
+            <button class="btn btn-primary" type="submit">Guardar cambios</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+{% block title %}Login | MGComputacion{% endblock %}
+{% block content %}
+<section class="login-shell">
+  <div class="container">
+    <div class="login-grid">
+      <aside class="login-brand-panel">
+        <div class="brand-copy">
+          <h1>Tecnología que impulsa el futuro.</h1>
+          <p>
+            En MGComputacion administras clientes, productos y comportamiento de agentes IA
+            desde una sola plataforma.
+          </p>
+          <div class="mini-feature-list">
+            <div><strong>Seguridad</strong><span>Aprobación manual y separación por empresa</span></div>
+            <div><strong>Rendimiento</strong><span>Base ligera para desarrollo local y VPS</span></div>
+            <div><strong>Escalabilidad</strong><span>Lista para migrar a PostgreSQL</span></div>
+          </div>
+        </div>
+      </aside>
+
+      <section class="login-card">
+        <div class="login-card-header">
+          <img src="{{ url_for('static', filename='img/logo-mg.png') }}" alt="MGComputacion" class="login-logo">
+          <h2>Bienvenido</h2>
+          <p>Inicia sesión para continuar</p>
+        </div>
+
+        <form method="post" class="form-grid">
+          <label>
+            <span>Correo electrónico</span>
+            <input type="email" name="email" placeholder="tu@correo.com" required>
+          </label>
+
+          <label>
+            <span>Contraseña</span>
+            <input type="password" name="password" placeholder="••••••••" required>
+          </label>
+
+          <div class="form-row-between">
+            <label class="checkbox">
+              <input type="checkbox" name="remember">
+              <span>Recordarme</span>
+            </label>
+            <span class="muted-link disabled-link">¿Olvidaste tu contraseña?</span>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-block">Iniciar sesión</button>
+        </form>
+
+        <p class="small-center">
+          ¿No tienes cuenta? <a href="{{ url_for('auth.register') }}">Crear cuenta</a>
+        </p>
+      </section>
+    </div>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,69 @@
+{% extends 'base.html' %}
+{% block title %}Productos | MGComputacion{% endblock %}
+{% block content %}
+<section class="dashboard-shell container">
+  <div class="dashboard-grid">
+    {% include 'dashboard/_sidebar.html' %}
+    <div class="dashboard-main">
+      <div class="panel">
+        <div class="section-header">
+          <div>
+            <h1>Productos</h1>
+            <p>Gestiona el catálogo de tu empresa.</p>
+          </div>
+          <a href="{{ url_for('dashboard.product_create') }}" class="btn btn-primary">Nuevo producto</a>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Imagen</th>
+                <th>Nombre</th>
+                <th>Precio</th>
+                <th>SKU</th>
+                <th>Stock</th>
+                <th>Categoría</th>
+                <th>Estado</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for product in products %}
+              <tr>
+                <td>
+                  {% if product.image_path %}
+                    <img src="{{ url_for('static', filename=product.image_path) }}" alt="{{ product.name }}" class="thumb">
+                  {% else %}
+                    <span class="muted">Sin imagen</span>
+                  {% endif %}
+                </td>
+                <td>{{ product.name }}</td>
+                <td>${{ '%.2f'|format(product.price) }}</td>
+                <td>{{ product.sku or '-' }}</td>
+                <td>{{ product.stock }}</td>
+                <td>
+                  {{ product.primary_category.name if product.primary_category else '-' }}
+                  {% if product.secondary_category %}/ {{ product.secondary_category.name }}{% endif %}
+                </td>
+                <td><span class="status-badge status-{{ 'approved' if product.is_active else 'disabled' }}">{{ 'activo' if product.is_active else 'inactivo' }}</span></td>
+                <td class="actions-cell">
+                  <a href="{{ url_for('dashboard.product_edit', product_id=product.id) }}" class="btn btn-secondary btn-xs">Editar</a>
+                  <form method="post" action="{{ url_for('dashboard.product_delete', product_id=product.id) }}" class="inline-form" onsubmit="return confirm('¿Eliminar producto?');">
+                    <button class="btn btn-danger btn-xs">Eliminar</button>
+                  </form>
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="8">Todavía no hay productos.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

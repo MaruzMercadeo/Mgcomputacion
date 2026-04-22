@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% block title %}Usuarios | Admin{% endblock %}
+{% block content %}
+<section class="dashboard-shell container">
+  <div class="section-header">
+    <h1>Usuarios registrados</h1>
+    <p>Aprueba, rechaza o deshabilita cuentas.</p>
+  </div>
+
+  <div class="filter-row">
+    <a class="filter-pill {% if not current_status %}active{% endif %}" href="{{ url_for('admin.users') }}">Todos</a>
+    <a class="filter-pill {% if current_status == 'pending' %}active{% endif %}" href="{{ url_for('admin.users', status='pending') }}">Pendientes</a>
+    <a class="filter-pill {% if current_status == 'approved' %}active{% endif %}" href="{{ url_for('admin.users', status='approved') }}">Aprobados</a>
+    <a class="filter-pill {% if current_status == 'rejected' %}active{% endif %}" href="{{ url_for('admin.users', status='rejected') }}">Rechazados</a>
+    <a class="filter-pill {% if current_status == 'disabled' %}active{% endif %}" href="{{ url_for('admin.users', status='disabled') }}">Deshabilitados</a>
+  </div>
+
+  <div class="panel">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Nombre</th>
+            <th>Email</th>
+            <th>Empresa</th>
+            <th>Estado</th>
+            <th>Rol</th>
+            <th>Creado</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for user in users %}
+          <tr>
+            <td>{{ user.name }}</td>
+            <td>{{ user.email }}</td>
+            <td>{{ user.company.company_name if user.company else '-' }}</td>
+            <td><span class="status-badge status-{{ user.status }}">{{ user.status }}</span></td>
+            <td>{{ user.role }}</td>
+            <td>{{ user.created_at.strftime('%Y-%m-%d') }}</td>
+            <td class="actions-cell">
+              {% if user.role != 'admin' %}
+              <form method="post" action="{{ url_for('admin.approve_user', user_id=user.id) }}" class="inline-form">
+                <button class="btn btn-success btn-xs">Aprobar</button>
+              </form>
+              <form method="post" action="{{ url_for('admin.reject_user', user_id=user.id) }}" class="inline-form">
+                <button class="btn btn-warning btn-xs">Rechazar</button>
+              </form>
+              <form method="post" action="{{ url_for('admin.disable_user', user_id=user.id) }}" class="inline-form">
+                <button class="btn btn-danger btn-xs">Deshabilitar</button>
+              </form>
+              {% else %}
+                <span class="muted">Admin</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="7">No hay usuarios para mostrar.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endblock %}

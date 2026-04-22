@@ -1,0 +1,56 @@
+{% extends 'base.html' %}
+{% block title %}Panel cliente | MGComputacion{% endblock %}
+{% block content %}
+<section class="dashboard-shell container">
+  <div class="dashboard-grid">
+    {% include 'dashboard/_sidebar.html' %}
+    <div class="dashboard-main">
+      <div class="section-header">
+        <h1>{{ company.company_name }}</h1>
+        <p>Resumen general de tu espacio de trabajo.</p>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card"><span>Productos</span><strong>{{ stats.products }}</strong></div>
+        <div class="stat-card"><span>Categorías</span><strong>{{ stats.categories }}</strong></div>
+        <div class="stat-card"><span>PDFs</span><strong>{{ stats.pdfs }}</strong></div>
+        <div class="stat-card"><span>API Keys</span><strong>{{ stats.api_keys }}</strong></div>
+      </div>
+
+      <div class="panel">
+        <div class="section-header compact">
+          <h2>Productos recientes</h2>
+          <a href="{{ url_for('dashboard.product_create') }}">Crear producto</a>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Producto</th>
+                <th>Precio</th>
+                <th>Stock</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for product in latest_products %}
+              <tr>
+                <td>{{ product.name }}</td>
+                <td>${{ '%.2f'|format(product.price) }}</td>
+                <td>{{ product.stock }}</td>
+                <td><span class="status-badge status-{{ 'approved' if product.is_active else 'disabled' }}">{{ 'activo' if product.is_active else 'inactivo' }}</span></td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="4">Aún no tienes productos registrados.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

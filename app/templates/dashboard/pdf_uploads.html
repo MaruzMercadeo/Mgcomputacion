@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block title %}PDFs | MGComputacion{% endblock %}
+{% block content %}
+<section class="dashboard-shell container">
+  <div class="dashboard-grid">
+    {% include 'dashboard/_sidebar.html' %}
+    <div class="dashboard-main">
+      <div class="panel">
+        <div class="section-header">
+          <h1>Carga de PDFs</h1>
+          <p>Sube catalogos PDF para extraer texto e importar productos automaticamente.</p>
+        </div>
+
+        <form method="post" enctype="multipart/form-data" class="form-grid compact-form">
+          <label>
+            <span>Archivo PDF</span>
+            <input type="file" name="pdf" accept=".pdf" required>
+          </label>
+          <div>
+            <button class="btn btn-primary" type="submit">Subir PDF</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="panel">
+        <div class="section-header compact">
+          <h2>Archivos cargados</h2>
+        </div>
+        <div class="stack-list">
+          {% for item in uploads %}
+          <div class="stack-card">
+            <div class="stack-card-header">
+              <strong>{{ item.original_filename }}</strong>
+              <span class="status-badge status-{{ 'approved' if item.status in ['processed', 'imported'] else 'warning' }}">{{ item.status }}</span>
+            </div>
+            <p class="muted small">{{ item.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+            <p class="muted small">Productos importados: {{ item.imported_items_count }}</p>
+            <pre class="preview-box">{{ item.extracted_preview or 'Sin preview' }}</pre>
+          </div>
+          {% else %}
+          <p class="muted">No hay PDFs cargados todavía.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

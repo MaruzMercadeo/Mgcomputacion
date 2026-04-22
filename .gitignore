@@ -1,0 +1,12 @@
+venv/
+.venv/
+Mgcomputacion/
+__pycache__/
+*.pyc
+.instance
+.env
+instance/*.db
+app/static/uploads/products/*
+app/static/uploads/pdfs/*
+!app/static/uploads/products/.gitkeep
+!app/static/uploads/pdfs/.gitkeep

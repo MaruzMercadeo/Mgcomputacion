@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block title %}Cuenta pendiente | MGComputacion{% endblock %}
+{% block content %}
+<section class="simple-shell">
+  <div class="container narrow">
+    <div class="panel center-panel">
+      <h1>Cuenta pendiente de aprobación</h1>
+      <p>
+        Tu registro fue recibido correctamente. Un administrador debe aprobar tu cuenta antes de
+        permitir el acceso al panel.
+      </p>
+      <a href="{{ url_for('auth.login') }}" class="btn btn-secondary">Volver al login</a>
+    </div>
+  </div>
+</section>
+{% endblock %}
