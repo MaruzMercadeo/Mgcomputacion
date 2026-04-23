@@ -30,10 +30,17 @@ python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env
-flask --app run.py init-db
+flask --app run.py db upgrade
 flask --app run.py seed-admin --email admin@mg.local --password Admin123! --name "Administrador"
 flask --app run.py run
 ```
+
+> Si ya tenías la base de datos funcionando **antes** de que existieran las migraciones (versiones anteriores usaban `flask init-db`), márcala como baseline una sola vez y luego aplica las nuevas migraciones:
+>
+> ```powershell
+> flask --app run.py db stamp bb0ccbd48cf3
+> flask --app run.py db upgrade
+> ```
 
 La app quedará en:
 
@@ -68,7 +75,7 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-flask --app run.py init-db
+flask --app run.py db upgrade
 flask --app run.py seed-admin --email admin@mg.local --password Admin123! --name "Administrador"
 flask --app run.py run --host 0.0.0.0 --port 5555
 ```
@@ -139,6 +146,18 @@ Endpoints base:
 - `PUT /api/v1/products/<id>`
 - `DELETE /api/v1/products/<id>`
 - `POST /api/v1/pdf/upload`
+
+### Importación unificada (PDF / CSV / imagen)
+
+Flujo en dos pasos: subir → revisar drafts → commitear.
+
+- `POST /api/v1/imports/upload` — multipart, field `file`. Acepta `.pdf`, `.csv`, `.png/.jpg/.jpeg/.webp/.gif`. Responde `201` con el `import_job` y los `items` generados como `draft`.
+- `GET /api/v1/imports/<id>` — devuelve el job y sus items. Bloquea con `403` si el job no pertenece a la empresa de la API key.
+- `POST /api/v1/imports/<id>/commit` — convierte los drafts en productos reales. Body opcional `{"item_ids":[1,2,3]}` para commit selectivo. Los duplicados (por SKU, o por nombre+precio) quedan como `skipped`.
+
+CSV reconoce columnas: `nombre/name`, `precio/price`, `descripcion`, `sku`, `stock`, `categoria`, `subcategoria`, `imagen`. Separador auto-detectado (`, ; \t |`).
+
+El endpoint legacy `POST /api/v1/pdf/upload` sigue funcionando igual (crea productos de una pasada, sin staging).
 
 ## 8. Generar API key
 

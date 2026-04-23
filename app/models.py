@@ -70,6 +70,7 @@ class Company(TimestampMixin, db.Model):
     pdf_uploads = db.relationship("PdfUpload", back_populates="company", lazy="dynamic", cascade="all, delete-orphan")
     api_keys = db.relationship("ApiKey", back_populates="company", lazy="dynamic", cascade="all, delete-orphan")
     audit_logs = db.relationship("AuditLog", back_populates="company", lazy="dynamic", cascade="all, delete-orphan")
+    import_jobs = db.relationship("ImportJob", back_populates="company", lazy="dynamic", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<Company {self.company_name}>"
@@ -221,6 +222,62 @@ class ApiKey(TimestampMixin, db.Model):
 
     def matches(self, plain_key: str) -> bool:
         return self.key_hash == self.hash_key(plain_key)
+
+
+class ImportJob(TimestampMixin, db.Model):
+    __tablename__ = "import_jobs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    source = db.Column(db.String(20), nullable=False)  # pdf | csv | image
+    status = db.Column(db.String(20), nullable=False, default="processing")  # processing | ready | committed | failed
+    original_filename = db.Column(db.String(255), nullable=False)
+    stored_path = db.Column(db.String(255), nullable=False)
+    summary = db.Column(db.Text, nullable=True)
+
+    company = db.relationship("Company", back_populates="import_jobs")
+    user = db.relationship("User", foreign_keys=[user_id])
+    items = db.relationship("ImportItem", back_populates="job", lazy="dynamic", cascade="all, delete-orphan")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "source": self.source,
+            "status": self.status,
+            "original_filename": self.original_filename,
+            "stored_path": self.stored_path,
+            "summary": self.summary,
+            "items_count": self.items.count(),
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+
+class ImportItem(TimestampMixin, db.Model):
+    __tablename__ = "import_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    job_id = db.Column(db.Integer, db.ForeignKey("import_jobs.id"), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default="draft")  # draft | committed | skipped
+    payload = db.Column(db.Text, nullable=False)  # JSON serialized
+    reason = db.Column(db.String(255), nullable=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=True)
+
+    job = db.relationship("ImportJob", back_populates="items")
+    product = db.relationship("Product", foreign_keys=[product_id])
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "job_id": self.job_id,
+            "status": self.status,
+            "payload": self.payload,
+            "reason": self.reason,
+            "product_id": self.product_id,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
 
 
 class AuditLog(db.Model):

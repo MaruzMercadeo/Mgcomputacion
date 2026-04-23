@@ -26,6 +26,7 @@ def create_app(config_class=Config):
 
     Path(app.config["PRODUCT_UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
     Path(app.config["PDF_UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
+    Path(app.config["IMPORT_UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
 
     db.init_app(app)
     login_manager.init_app(app)

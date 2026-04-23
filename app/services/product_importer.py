@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Iterable
 
 from sqlalchemy import func
 
 from ..extensions import db
-from ..models import Product
+from ..models import Category, ImportItem, ImportJob, Product
 
 
 PRICE_RE = re.compile(
@@ -30,6 +31,9 @@ class ProductCandidate:
     description: str = ""
     sku: str | None = None
     stock: int = 0
+    image_path: str | None = None
+    category: str | None = None
+    subcategory: str | None = None
 
 
 def parse_products_from_text(text: str) -> list[ProductCandidate]:
@@ -193,3 +197,128 @@ def _duplicate_reason(company_id: int, candidate: ProductCandidate) -> str | Non
         return "nombre y precio duplicados"
 
     return None
+
+
+def _candidate_payload(candidate: ProductCandidate) -> str:
+    data = asdict(candidate)
+    data["price"] = str(candidate.price)
+    return json.dumps(data, ensure_ascii=False)
+
+
+def stage_candidates_as_drafts(job: ImportJob, candidates: Iterable[ProductCandidate]) -> list[ImportItem]:
+    """Persist candidates as draft ImportItem rows tied to the job.
+
+    Caller is responsible for db.session.commit().
+    """
+    items: list[ImportItem] = []
+    for candidate in candidates:
+        item = ImportItem(
+            job_id=job.id,
+            status="draft",
+            payload=_candidate_payload(candidate),
+        )
+        db.session.add(item)
+        items.append(item)
+    return items
+
+
+def _resolve_category_id(company_id: int, name: str | None) -> int | None:
+    if not name:
+        return None
+    normalized = name.strip()
+    if not normalized:
+        return None
+    existing = Category.query.filter(
+        Category.company_id == company_id,
+        func.lower(Category.name) == normalized.lower(),
+    ).first()
+    if existing:
+        return existing.id
+    category = Category(company_id=company_id, name=normalized[:120], is_active=True)
+    db.session.add(category)
+    db.session.flush()
+    return category.id
+
+
+def commit_drafts(job: ImportJob, item_ids: list[int] | None = None) -> dict[str, Any]:
+    """Convert draft ImportItems into Products.
+
+    item_ids: optional subset to commit. If None, commits all drafts.
+    Caller is responsible for db.session.commit().
+    """
+    query = ImportItem.query.filter_by(job_id=job.id, status="draft")
+    if item_ids:
+        query = query.filter(ImportItem.id.in_(item_ids))
+    drafts = query.all()
+
+    committed = 0
+    skipped = 0
+    product_ids: list[int] = []
+
+    for item in drafts:
+        try:
+            data = json.loads(item.payload)
+        except json.JSONDecodeError:
+            item.status = "skipped"
+            item.reason = "payload inválido"
+            skipped += 1
+            continue
+
+        try:
+            price = Decimal(str(data.get("price", "0")))
+        except InvalidOperation:
+            item.status = "skipped"
+            item.reason = "price inválido"
+            skipped += 1
+            continue
+
+        candidate = ProductCandidate(
+            name=(data.get("name") or "").strip(),
+            price=price,
+            description=data.get("description") or "",
+            sku=data.get("sku"),
+            stock=int(data.get("stock") or 0),
+            image_path=data.get("image_path"),
+            category=data.get("category"),
+            subcategory=data.get("subcategory"),
+        )
+
+        if not candidate.name:
+            item.status = "skipped"
+            item.reason = "nombre vacío"
+            skipped += 1
+            continue
+
+        reason = _duplicate_reason(job.company_id, candidate)
+        if reason:
+            item.status = "skipped"
+            item.reason = reason
+            skipped += 1
+            continue
+
+        product = Product(
+            company_id=job.company_id,
+            name=candidate.name,
+            description=candidate.description,
+            sku=candidate.sku,
+            price=candidate.price,
+            stock=candidate.stock,
+            image_path=candidate.image_path,
+            category_id=_resolve_category_id(job.company_id, candidate.category),
+            subcategory_id=_resolve_category_id(job.company_id, candidate.subcategory),
+            is_active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+
+        item.status = "committed"
+        item.product_id = product.id
+        item.reason = None
+        committed += 1
+        product_ids.append(product.id)
+
+    return {
+        "committed": committed,
+        "skipped": skipped,
+        "products": product_ids,
+    }

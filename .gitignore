@@ -9,5 +9,7 @@ instance/*.db
 logs/
 app/static/uploads/products/*
 app/static/uploads/pdfs/*
+app/static/uploads/imports/*
 !app/static/uploads/products/.gitkeep
 !app/static/uploads/pdfs/.gitkeep
+!app/static/uploads/imports/.gitkeep

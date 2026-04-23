@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -8,9 +9,16 @@ from flask import current_app, g, jsonify, request
 
 from ...decorators import api_key_required
 from ...extensions import db
-from ...models import AgentSetting, Category, PdfUpload, Product
+from ...models import AgentSetting, Category, ImportItem, ImportJob, PdfUpload, Product
+from ...services.csv_parser import parse_products_from_csv
+from ...services.image_importer import build_candidate_from_image
 from ...services.pdf_parser import extract_pdf_text
-from ...services.product_importer import import_products_from_text
+from ...services.product_importer import (
+    commit_drafts,
+    import_products_from_text,
+    parse_products_from_text,
+    stage_candidates_as_drafts,
+)
 from ...utils import allowed_file, log_action, relative_pdf_path, relative_product_image_path, save_upload
 from . import bp
 
@@ -259,3 +267,138 @@ def upload_pdf():
         "pdf": upload.to_dict(),
         "import_result": import_result,
     }), 201
+
+
+def _detect_source(filename: str) -> str | None:
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext in current_app.config["ALLOWED_PDF_EXTENSIONS"]:
+        return "pdf"
+    if ext in current_app.config["ALLOWED_CSV_EXTENSIONS"]:
+        return "csv"
+    if ext in current_app.config["ALLOWED_IMAGE_EXTENSIONS"]:
+        return "image"
+    return None
+
+
+def _serialize_items(items):
+    serialized = []
+    for item in items:
+        data = item.to_dict()
+        try:
+            data["payload"] = json.loads(data["payload"])
+        except (TypeError, json.JSONDecodeError):
+            pass
+        serialized.append(data)
+    return serialized
+
+
+@bp.post("/imports/upload")
+@api_key_required
+def upload_import():
+    company = _company()
+    upload = request.files.get("file")
+    if not upload or not upload.filename:
+        return jsonify({"error": "Debes adjuntar un archivo en el campo 'file'"}), 400
+
+    if not allowed_file(upload.filename, current_app.config["ALLOWED_IMPORT_EXTENSIONS"]):
+        return jsonify({"error": "Formato no permitido"}), 400
+
+    source = _detect_source(upload.filename)
+    if not source:
+        return jsonify({"error": "Formato no permitido"}), 400
+
+    if source == "image":
+        target_folder = Path(current_app.config["PRODUCT_UPLOAD_FOLDER"])
+    elif source == "pdf":
+        target_folder = Path(current_app.config["PDF_UPLOAD_FOLDER"])
+    else:
+        target_folder = Path(current_app.config["IMPORT_UPLOAD_FOLDER"])
+
+    stored_filename = save_upload(upload, target_folder)
+    stored_path = str((target_folder / stored_filename).relative_to(Path(current_app.root_path)))
+    full_path = target_folder / stored_filename
+
+    job = ImportJob(
+        company_id=company.id,
+        source=source,
+        status="processing",
+        original_filename=upload.filename,
+        stored_path=stored_path,
+    )
+    db.session.add(job)
+    db.session.flush()
+
+    try:
+        if source == "pdf":
+            text = extract_pdf_text(full_path)
+            candidates = parse_products_from_text(text)
+        elif source == "csv":
+            candidates = parse_products_from_csv(full_path)
+        else:
+            candidates = [build_candidate_from_image(stored_filename, upload.filename)]
+
+        items = stage_candidates_as_drafts(job, candidates)
+        job.status = "ready"
+        job.summary = json.dumps({"detected": len(items)})
+        db.session.commit()
+    except Exception as error:  # noqa: BLE001
+        db.session.rollback()
+        job.status = "failed"
+        job.summary = json.dumps({"error": str(error)[:240]})
+        db.session.add(job)
+        db.session.commit()
+        log_action("api_import_upload_failed", entity_type="import_job", entity_id=job.id, company_id=company.id)
+        return jsonify({"error": "No se pudo procesar el archivo", "import_job": job.to_dict()}), 422
+
+    log_action("api_import_upload", entity_type="import_job", entity_id=job.id, company_id=company.id)
+    return jsonify({
+        "message": "Archivo importado",
+        "import_job": job.to_dict(),
+        "items": _serialize_items(job.items.all()),
+    }), 201
+
+
+@bp.get("/imports/<int:job_id>")
+@api_key_required
+def get_import(job_id):
+    company = _company()
+    job = ImportJob.query.get_or_404(job_id)
+    if job.company_id != company.id:
+        return jsonify({"error": "No autorizado"}), 403
+    return jsonify({
+        "import_job": job.to_dict(),
+        "items": _serialize_items(job.items.order_by(ImportItem.id.asc()).all()),
+    })
+
+
+@bp.post("/imports/<int:job_id>/commit")
+@api_key_required
+def commit_import(job_id):
+    company = _company()
+    job = ImportJob.query.get_or_404(job_id)
+    if job.company_id != company.id:
+        return jsonify({"error": "No autorizado"}), 403
+    if job.status == "failed":
+        return jsonify({"error": "El job está en estado failed"}), 409
+
+    data = request.get_json(force=True, silent=True) or {}
+    item_ids = data.get("item_ids")
+    if item_ids is not None and not isinstance(item_ids, list):
+        return jsonify({"error": "item_ids debe ser una lista"}), 400
+
+    try:
+        result = commit_drafts(job, item_ids=item_ids)
+        remaining = job.items.filter_by(status="draft").count()
+        job.status = "committed" if remaining == 0 else "ready"
+        db.session.commit()
+    except Exception as error:  # noqa: BLE001
+        db.session.rollback()
+        return jsonify({"error": f"Commit falló: {error}"}), 500
+
+    log_action("api_import_commit", entity_type="import_job", entity_id=job.id, company_id=company.id,
+               details=json.dumps(result))
+    return jsonify({
+        "message": "Commit procesado",
+        "import_job": job.to_dict(),
+        **result,
+    })
