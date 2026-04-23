@@ -6,6 +6,9 @@ __pycache__/
 .instance
 .env
 instance/*.db
+instance/*.db-shm
+instance/*.db-wal
+instance/*.db-journal
 logs/
 app/static/uploads/products/*
 app/static/uploads/pdfs/*
