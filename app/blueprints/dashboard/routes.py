@@ -7,6 +7,7 @@ from pathlib import Path
 
 from flask import current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user
+from sqlalchemy import or_, func
 
 from ...decorators import approved_required
 from ...extensions import db
@@ -123,8 +124,148 @@ def delete_category(category_id):
 @approved_required
 def products():
     company = _company()
-    products = company.products.order_by(Product.created_at.desc()).all()
-    return render_template("dashboard/products.html", products=products)
+
+    filters = _read_product_filters(request.args)
+    per_page = max(10, min(int(request.args.get("per_page") or 25), 200))
+    page = max(1, int(request.args.get("page") or 1))
+
+    query = _apply_product_filters(company.products, filters)
+    pagination = query.order_by(Product.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    primary_categories = (
+        company.categories.filter_by(parent_id=None).order_by(Category.name.asc()).all()
+    )
+
+    return render_template(
+        "dashboard/products.html",
+        products=pagination.items,
+        pagination=pagination,
+        filters=filters,
+        per_page=per_page,
+        primary_categories=primary_categories,
+    )
+
+
+@bp.route("/panel/products/bulk", methods=["POST"])
+@approved_required
+def products_bulk():
+    company = _company()
+    action = (request.form.get("action") or "").strip().lower()
+    raw_ids = request.form.getlist("ids")
+
+    valid_actions = {"activate", "deactivate", "delete"}
+    if action not in valid_actions:
+        flash("Acción no válida.", "danger")
+        return redirect(_back_to_products_url())
+
+    ids: list[int] = []
+    for raw in raw_ids:
+        try:
+            ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        flash("No seleccionaste productos.", "warning")
+        return redirect(_back_to_products_url())
+
+    query = Product.query.filter(Product.company_id == company.id, Product.id.in_(ids))
+    matched = query.all()
+    if not matched:
+        flash("Ninguno de los productos seleccionados pertenece a tu empresa.", "danger")
+        return redirect(_back_to_products_url())
+
+    try:
+        if action == "delete":
+            count = 0
+            for product in matched:
+                db.session.delete(product)
+                count += 1
+            db.session.commit()
+            log_action("bulk_delete_products", entity_type="product",
+                       entity_id=",".join(str(p.id) for p in matched),
+                       company_id=company.id, user_id=current_user.id,
+                       details=json.dumps({"count": count}))
+            flash(f"Eliminados {count} producto(s).", "success")
+        else:
+            target = action == "activate"
+            count = 0
+            for product in matched:
+                if product.is_active != target:
+                    product.is_active = target
+                    count += 1
+            db.session.commit()
+            verb = "activado" if target else "desactivado"
+            log_action(f"bulk_{action}_products", entity_type="product",
+                       entity_id=",".join(str(p.id) for p in matched),
+                       company_id=company.id, user_id=current_user.id,
+                       details=json.dumps({"count": count}))
+            flash(f"Se {verb}n {count} producto(s).", "success")
+    except Exception:  # noqa: BLE001
+        db.session.rollback()
+        flash("La operación masiva falló y se deshizo. Revisá e intentá de nuevo.", "danger")
+
+    return redirect(_back_to_products_url())
+
+
+def _read_product_filters(args) -> dict:
+    return {
+        "q": (args.get("q") or "").strip(),
+        "status": (args.get("status") or "all").strip().lower(),
+        "has_image": (args.get("has_image") or "any").strip().lower(),
+        "has_price": (args.get("has_price") or "any").strip().lower(),
+        "category_id": (args.get("category_id") or "").strip(),
+    }
+
+
+def _apply_product_filters(base_query, filters: dict):
+    query = base_query
+
+    q = filters.get("q")
+    if q:
+        like = f"%{q.lower()}%"
+        query = query.outerjoin(
+            Category, Product.category_id == Category.id
+        ).filter(
+            or_(
+                func.lower(Product.name).like(like),
+                func.lower(Product.sku).like(like),
+                func.lower(Product.description).like(like),
+                func.lower(Category.name).like(like),
+            )
+        )
+
+    status = filters.get("status")
+    if status == "active":
+        query = query.filter(Product.is_active.is_(True))
+    elif status == "inactive":
+        query = query.filter(Product.is_active.is_(False))
+
+    has_image = filters.get("has_image")
+    if has_image == "yes":
+        query = query.filter(Product.image_path.isnot(None), Product.image_path != "")
+    elif has_image == "no":
+        query = query.filter(or_(Product.image_path.is_(None), Product.image_path == ""))
+
+    has_price = filters.get("has_price")
+    if has_price == "yes":
+        query = query.filter(Product.price > 0)
+    elif has_price == "no":
+        query = query.filter(or_(Product.price.is_(None), Product.price == 0))
+
+    category_id = filters.get("category_id")
+    if category_id and category_id.isdigit():
+        query = query.filter(Product.category_id == int(category_id))
+
+    return query
+
+
+def _back_to_products_url() -> str:
+    """Preserve filter/search query params when redirecting back."""
+    safe_keys = {"q", "status", "has_image", "has_price", "category_id", "page", "per_page"}
+    kwargs = {k: v for k, v in request.form.items() if k in safe_keys and v}
+    return url_for("dashboard.products", **kwargs)
 
 
 @bp.route("/panel/catalog")

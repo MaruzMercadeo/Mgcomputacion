@@ -14,10 +14,71 @@
           <a href="{{ url_for('dashboard.product_create') }}" class="btn btn-primary">Nuevo producto</a>
         </div>
 
+        <form method="get" action="{{ url_for('dashboard.products') }}"
+              class="filter-bar"
+              style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin-bottom:.75rem;">
+          <input type="search" name="q" value="{{ filters.q }}"
+                 placeholder="Buscar nombre, SKU, descripción, categoría..."
+                 style="flex:1 1 240px;min-width:200px;">
+          <select name="status">
+            <option value="all"      {% if filters.status == 'all' %}selected{% endif %}>Estado: todos</option>
+            <option value="active"   {% if filters.status == 'active' %}selected{% endif %}>Solo activos</option>
+            <option value="inactive" {% if filters.status == 'inactive' %}selected{% endif %}>Solo inactivos</option>
+          </select>
+          <select name="has_image">
+            <option value="any" {% if filters.has_image == 'any' %}selected{% endif %}>Imagen: todos</option>
+            <option value="yes" {% if filters.has_image == 'yes' %}selected{% endif %}>Con imagen</option>
+            <option value="no"  {% if filters.has_image == 'no'  %}selected{% endif %}>Sin imagen</option>
+          </select>
+          <select name="has_price">
+            <option value="any" {% if filters.has_price == 'any' %}selected{% endif %}>Precio: todos</option>
+            <option value="yes" {% if filters.has_price == 'yes' %}selected{% endif %}>Con precio</option>
+            <option value="no"  {% if filters.has_price == 'no'  %}selected{% endif %}>Precio 0</option>
+          </select>
+          <select name="category_id">
+            <option value="">Categoría: todas</option>
+            {% for c in primary_categories %}
+              <option value="{{ c.id }}" {% if filters.category_id == c.id|string %}selected{% endif %}>{{ c.name }}</option>
+            {% endfor %}
+          </select>
+          <input type="hidden" name="per_page" value="{{ per_page }}">
+          <button class="btn btn-primary" type="submit">Filtrar</button>
+          <a href="{{ url_for('dashboard.products') }}" class="btn btn-secondary">Limpiar</a>
+        </form>
+
+        <p class="muted small" style="margin:.25rem 0 .75rem;">
+          Mostrando {{ products|length }} de {{ pagination.total }} producto(s)
+          {% if pagination.pages > 1 %}· página {{ pagination.page }} de {{ pagination.pages }}{% endif %}
+        </p>
+
+        <div id="bulk-bar"
+             style="display:none;position:sticky;top:0;z-index:5;padding:.6rem .75rem;background:#1b1b1b;border:1px solid #333;border-radius:6px;margin-bottom:.5rem;align-items:center;gap:.5rem;">
+          <strong id="selection-counter">0 seleccionados</strong>
+          <span class="spacer" style="flex:1;"></span>
+          <button type="button" class="btn btn-secondary btn-xs" data-bulk-action="activate">Activar</button>
+          <button type="button" class="btn btn-secondary btn-xs" data-bulk-action="deactivate">Desactivar</button>
+          <button type="button" class="btn btn-danger btn-xs"    data-bulk-action="delete">Eliminar</button>
+        </div>
+
+        <form id="bulk-form" method="post"
+              action="{{ url_for('dashboard.products_bulk') }}" style="display:none;">
+          <input type="hidden" name="action" value="">
+          <input type="hidden" name="q"            value="{{ filters.q }}">
+          <input type="hidden" name="status"       value="{{ filters.status }}">
+          <input type="hidden" name="has_image"    value="{{ filters.has_image }}">
+          <input type="hidden" name="has_price"    value="{{ filters.has_price }}">
+          <input type="hidden" name="category_id"  value="{{ filters.category_id }}">
+          <input type="hidden" name="page"         value="{{ pagination.page }}">
+          <input type="hidden" name="per_page"     value="{{ per_page }}">
+        </form>
+
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
+                <th style="width:28px;">
+                  <input type="checkbox" id="select-all" title="Seleccionar/deseleccionar todos los de esta página">
+                </th>
                 <th>Imagen</th>
                 <th>Nombre</th>
                 <th>Precio</th>
@@ -31,6 +92,7 @@
             <tbody>
               {% for product in products %}
               <tr>
+                <td><input type="checkbox" class="row-check" value="{{ product.id }}"></td>
                 <td>
                   {% if product.image_path %}
                     <img src="{{ url_for('static', filename=product.image_path) }}" alt="{{ product.name }}" class="thumb">
@@ -56,14 +118,81 @@
               </tr>
               {% else %}
               <tr>
-                <td colspan="8">Todavía no hay productos.</td>
+                <td colspan="9" class="muted">No hay productos que coincidan con los filtros.</td>
               </tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
+
+        {% if pagination.pages > 1 %}
+        <nav class="pager" style="display:flex;gap:.5rem;justify-content:center;align-items:center;margin-top:.75rem;">
+          {% if pagination.has_prev %}
+            <a class="btn btn-secondary btn-xs" href="{{ url_for('dashboard.products', page=pagination.prev_num, per_page=per_page, q=filters.q, status=filters.status, has_image=filters.has_image, has_price=filters.has_price, category_id=filters.category_id) }}">« Anterior</a>
+          {% else %}
+            <span class="btn btn-secondary btn-xs" style="opacity:.5;">« Anterior</span>
+          {% endif %}
+          <span class="muted small">{{ pagination.page }} / {{ pagination.pages }}</span>
+          {% if pagination.has_next %}
+            <a class="btn btn-secondary btn-xs" href="{{ url_for('dashboard.products', page=pagination.next_num, per_page=per_page, q=filters.q, status=filters.status, has_image=filters.has_image, has_price=filters.has_price, category_id=filters.category_id) }}">Siguiente »</a>
+          {% else %}
+            <span class="btn btn-secondary btn-xs" style="opacity:.5;">Siguiente »</span>
+          {% endif %}
+        </nav>
+        {% endif %}
       </div>
     </div>
   </div>
 </section>
+
+<script>
+(function () {
+  const master = document.getElementById('select-all');
+  const rows = Array.from(document.querySelectorAll('.row-check'));
+  const counter = document.getElementById('selection-counter');
+  const bar = document.getElementById('bulk-bar');
+  const bulkForm = document.getElementById('bulk-form');
+  if (!master || !bulkForm) return;
+
+  function update() {
+    const checked = rows.filter(r => r.checked);
+    counter.textContent = checked.length + ' seleccionado(s)';
+    bar.style.display = checked.length > 0 ? 'flex' : 'none';
+    master.indeterminate = checked.length > 0 && checked.length < rows.length;
+    master.checked = rows.length > 0 && checked.length === rows.length;
+  }
+
+  master.addEventListener('change', function () {
+    rows.forEach(r => { r.checked = master.checked; });
+    update();
+  });
+  rows.forEach(r => r.addEventListener('change', update));
+
+  document.querySelectorAll('[data-bulk-action]').forEach(btn => {
+    btn.addEventListener('click', function () {
+      const action = btn.dataset.bulkAction;
+      const selected = rows.filter(r => r.checked).map(r => r.value);
+      if (selected.length === 0) return;
+
+      if (action === 'delete') {
+        if (!confirm('¿Eliminar ' + selected.length + ' producto(s)? Esta acción no se puede deshacer.')) return;
+      }
+
+      // Clear any previous hidden ids, then inject current selection
+      bulkForm.querySelectorAll('input[name="ids"]').forEach(e => e.remove());
+      selected.forEach(id => {
+        const inp = document.createElement('input');
+        inp.type = 'hidden';
+        inp.name = 'ids';
+        inp.value = id;
+        bulkForm.appendChild(inp);
+      });
+      bulkForm.querySelector('input[name="action"]').value = action;
+      bulkForm.submit();
+    });
+  });
+
+  update();
+})();
+</script>
 {% endblock %}
