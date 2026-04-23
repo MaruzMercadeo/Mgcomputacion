@@ -215,11 +215,15 @@ def pdf_probe_command(pdf_path):
         return
 
     click.echo(f"\n✓ Claude respondió.")
+    click.echo(f"  stop_reason:   {stats.get('stop_reason', '?')}")
+    click.echo(f"  truncated:     {stats.get('truncated', False)}")
     click.echo(f"  input_tokens:  {stats.get('input_tokens', 0)}")
     click.echo(f"  output_tokens: {stats.get('output_tokens', 0)}")
     click.echo(f"  productos detectados: {stats.get('detected', 0)}")
     cost = stats.get("input_tokens", 0) / 1_000_000 + stats.get("output_tokens", 0) * 5 / 1_000_000
     click.echo(f"  costo aprox:   ${cost:.4f}")
+    if stats.get("truncated"):
+        click.echo("\n⚠ La respuesta se cortó por max_tokens. Recuperé los productos completos, pero puede faltar alguno del final del PDF.")
 
     if not candidates:
         click.echo("\n⚠ Claude respondió pero no detectó ningún producto en este PDF.")

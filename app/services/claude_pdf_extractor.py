@@ -13,8 +13,8 @@ from .product_importer import ProductCandidate
 
 API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2023-06-01"
-DEFAULT_TIMEOUT = 120
-MAX_TOKENS = 4096
+DEFAULT_TIMEOUT = 180
+MAX_TOKENS = 8192
 MAX_PDF_BYTES = 30 * 1024 * 1024  # Anthropic accepts up to 32 MB
 
 
@@ -138,10 +138,23 @@ def extract_products_with_claude(
         if block.get("type") == "text":
             text += block.get("text", "")
 
+    stop_reason = payload.get("stop_reason", "")
+    was_truncated = stop_reason == "max_tokens"
+
     try:
         data = _extract_json(text)
-    except ValueError as exc:
-        raise ClaudePDFUnavailable(f"No pude parsear JSON del modelo: {exc}") from exc
+    except ValueError:
+        # JSON malformed — most commonly because max_tokens cut the response
+        # mid-object. Try recovering all products up to the last complete one.
+        recovered = _recover_truncated_products(text)
+        if recovered is None:
+            hint = " (respuesta truncada por max_tokens)" if was_truncated else ""
+            preview = (text[:200] + "...") if len(text) > 200 else text
+            raise ClaudePDFUnavailable(
+                f"No pude parsear JSON del modelo{hint}. "
+                f"Primeros chars: {preview!r}"
+            )
+        data = {"products": recovered}
 
     products = data.get("products") or []
     if not isinstance(products, list):
@@ -155,8 +168,66 @@ def extract_products_with_claude(
         "output_tokens": int(usage.get("output_tokens") or 0),
         "detected": len(candidates),
         "raw_products": len(products),
+        "stop_reason": stop_reason,
+        "truncated": was_truncated,
     }
     return candidates, stats
+
+
+def _recover_truncated_products(text: str) -> list | None:
+    """Salvage as many complete product objects as possible from a truncated JSON.
+
+    When Anthropic cuts the output at max_tokens, the JSON usually breaks in
+    the middle of the last product. We parse incrementally, one `{...}` at a
+    time, inside the `products` array, and return the ones that were complete.
+    """
+    if not text:
+        return None
+
+    start = text.find("[")
+    if start == -1:
+        return None
+
+    # Scan forward tracking brace depth; keep every object that closes cleanly.
+    products: list = []
+    depth = 0
+    obj_start = -1
+    in_string = False
+    escape = False
+
+    for i in range(start + 1, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+
+        if ch == "{":
+            if depth == 0:
+                obj_start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and obj_start != -1:
+                candidate_text = text[obj_start:i + 1]
+                try:
+                    products.append(json.loads(candidate_text))
+                except json.JSONDecodeError:
+                    # Skip — likely malformed due to truncation nearby
+                    pass
+                obj_start = -1
+            elif depth < 0:
+                # Out of the products array
+                break
+
+    return products or None
 
 
 def _build_candidates(
