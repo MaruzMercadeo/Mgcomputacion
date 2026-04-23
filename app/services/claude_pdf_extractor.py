@@ -52,12 +52,16 @@ Devolvé SIEMPRE un JSON válido con este esquema EXACTO, sin texto antes ni des
       "subcategory": string | null,
       "page": number,
       "bbox": [x0, y0, x1, y1] | null,
+      "image_bbox": [x0, y0, x1, y1] | null,
       "confidence": number entre 0 y 1
     }
   ]
 }
 
-Las coordenadas bbox son las del PDF en puntos (points, no pixels), delimitando la tarjeta entera del producto. Si no podés ubicarlas con precisión, poné null."""
+Sobre las coordenadas (en PUNTOS, no pixels):
+- "bbox": rectángulo de la tarjeta ENTERA (incluye logo, SKU, imagen, nombre y precio).
+- "image_bbox": rectángulo SOLAMENTE de la foto del producto. DEBE excluir: el header con logo/SKU de arriba, la franja de color con el nombre, la etiqueta "$ X.XX / Min. Venta", los márgenes blancos de la tarjeta y cualquier texto o ícono lateral. Si la tarjeta tiene fondo blanco detrás de la foto, ajustá el rectángulo al contorno visible del producto, no al blanco.
+- Si no podés ubicar con precisión alguna bbox, poné null."""
 
 
 def extract_products_with_claude(
@@ -319,11 +323,14 @@ def _build_candidates(
         except (TypeError, ValueError):
             page_num = None
 
-        bbox = _parse_bbox(product.get("bbox"))
+        card_bbox = _parse_bbox(product.get("bbox"))
+        image_bbox = _parse_bbox(product.get("image_bbox"))
         image_path = None
-        if dst_folder and bbox and page_num:
-            image_path = _crop_and_save(
-                pdf_path, page_num, bbox, Path(dst_folder), f"{filename_prefix}_p{page_num}_i{idx}"
+        crop_warnings: list[str] = []
+        if dst_folder and (card_bbox or image_bbox) and page_num:
+            image_path, crop_warnings = _crop_and_save(
+                pdf_path, page_num, card_bbox, image_bbox,
+                Path(dst_folder), f"{filename_prefix}_p{page_num}_i{idx}"
             )
 
         confidence = product.get("confidence")
@@ -332,7 +339,7 @@ def _build_candidates(
         except (TypeError, ValueError):
             confidence = None
 
-        warnings: list[str] = []
+        warnings: list[str] = list(crop_warnings)
         if price is None:
             warnings.append("price_missing")
         if not sku:
@@ -413,44 +420,178 @@ def _parse_bbox(raw) -> tuple[float, float, float, float] | None:
 def _crop_and_save(
     pdf_path: Path,
     page_num: int,
-    bbox: tuple[float, float, float, float],
+    card_bbox: tuple[float, float, float, float] | None,
+    image_bbox: tuple[float, float, float, float] | None,
     dst: Path,
     filename_stem: str,
-) -> str | None:
+) -> tuple[str | None, list[str]]:
+    """Crop the product image region and save it, validating quality.
+
+    Strategy, in order:
+      1. Use image_bbox if Claude provided one and it passes validation.
+      2. Shrink the card_bbox to the central image region (heuristic for
+         catalogs with logo/header on top and name/price band on bottom).
+      3. Fall back to the raw card_bbox with a warning.
+    """
     try:
         import fitz  # type: ignore
     except ImportError:
-        return None
+        return None, ["pymupdf_missing"]
 
     try:
         doc = fitz.open(str(pdf_path))
     except Exception:  # noqa: BLE001
-        return None
+        return None, ["pdf_open_failed"]
 
     try:
         if page_num < 1 or page_num > doc.page_count:
-            return None
+            return None, ["page_out_of_range"]
         page = doc[page_num - 1]
-        x0, y0, x1, y1 = bbox
-        # Clamp to page
-        rect = fitz.Rect(x0, y0, x1, y1) & page.rect
-        if rect.is_empty:
-            return None
-        try:
-            pix = page.get_pixmap(clip=rect, matrix=fitz.Matrix(2, 2))
-        except Exception:  # noqa: BLE001
-            return None
 
+        attempts: list[tuple[str, tuple[float, float, float, float]]] = []
+        if image_bbox:
+            attempts.append(("image_bbox", image_bbox))
+        if card_bbox:
+            attempts.append(("card_shrunk", _shrink_to_image_region(card_bbox)))
+            attempts.append(("card_raw", card_bbox))
+
+        last_pix = None
+        last_label = ""
+        last_warnings: list[str] = []
+        skipped_labels: list[str] = []
+
+        for label, bbox in attempts:
+            rect = fitz.Rect(*bbox) & page.rect
+            if rect.is_empty or rect.width < 10 or rect.height < 10:
+                skipped_labels.append(f"{label}_out_of_range")
+                continue
+            try:
+                pix = page.get_pixmap(clip=rect, matrix=fitz.Matrix(2, 2))
+            except Exception:  # noqa: BLE001
+                skipped_labels.append(f"{label}_render_failed")
+                continue
+
+            warnings = _validate_crop(page, bbox, pix)
+            last_pix = pix
+            last_label = label
+            last_warnings = warnings
+            if not warnings:
+                saved = _save_pixmap(pix, dst, filename_stem)
+                if saved is None:
+                    return None, ["crop_save_failed"]
+                # Clean path: mention fallback only if earlier attempts were rejected
+                out_warnings: list[str] = []
+                if skipped_labels or label != attempts[0][0]:
+                    out_warnings.append(f"crop_used_{label}")
+                return saved, out_warnings
+            skipped_labels.append(f"{label}_" + ",".join(warnings))
+
+        # All attempts flagged warnings — save the best-effort crop anyway.
+        if last_pix is not None:
+            saved = _save_pixmap(last_pix, dst, filename_stem)
+            if saved:
+                return saved, [f"crop_{w}" for w in last_warnings] + [f"crop_best_effort_{last_label}"]
+
+        return None, ["crop_failed"]
+    finally:
+        doc.close()
+
+
+def _shrink_to_image_region(bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    """Trim a full-card bbox down to the middle region that typically holds the product photo.
+
+    Assumption (catalog layout, MAG Tools style):
+      - top 15%: logo + SKU header
+      - bottom 30%: colored name band + price/min-venta label
+      - left/right 5%: card gutters
+    Works reasonably for most catalog cards even when proportions differ.
+    """
+    x0, y0, x1, y1 = bbox
+    w = max(0.0, x1 - x0)
+    h = max(0.0, y1 - y0)
+    return (
+        x0 + w * 0.05,
+        y0 + h * 0.15,
+        x1 - w * 0.05,
+        y1 - h * 0.30,
+    )
+
+
+def _validate_crop(page, bbox: tuple[float, float, float, float], pix) -> list[str]:
+    """Return warning codes if the crop looks empty or text-heavy."""
+    warnings: list[str] = []
+
+    if _is_mostly_white(pix):
+        warnings.append("mostly_white")
+
+    if _text_area_ratio(page, bbox) > 0.35:
+        warnings.append("text_heavy")
+
+    return warnings
+
+
+def _is_mostly_white(pix, threshold: float = 0.90) -> bool:
+    """True if ≥ threshold of pixels are near-white (probably blank page region)."""
+    try:
+        from PIL import Image  # type: ignore
+    except ImportError:
+        return False
+    try:
+        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+    except Exception:  # noqa: BLE001
+        return False
+    gray = img.convert("L")
+    total = gray.width * gray.height
+    if total == 0:
+        return True
+    hist = gray.histogram()
+    near_white = sum(hist[240:256])
+    return (near_white / total) > threshold
+
+
+def _text_area_ratio(page, bbox: tuple[float, float, float, float]) -> float:
+    """Fraction of the bbox covered by PDF text blocks (1.0 = all text)."""
+    try:
+        import fitz  # type: ignore
+    except ImportError:
+        return 0.0
+    try:
+        rect = fitz.Rect(*bbox)
+        blocks = page.get_text("blocks", clip=rect)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+    bbox_area = max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
+    if bbox_area <= 0:
+        return 0.0
+
+    text_area = 0.0
+    for block in blocks:
+        if len(block) < 5:
+            continue
+        bx0, by0, bx1, by1 = block[0], block[1], block[2], block[3]
+        text_block = block[4]
+        if not (text_block or "").strip():
+            continue
+        # Intersect block rect with the crop rect to count only overlapping area
+        ix0 = max(bx0, bbox[0])
+        iy0 = max(by0, bbox[1])
+        ix1 = min(bx1, bbox[2])
+        iy1 = min(by1, bbox[3])
+        text_area += max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
+
+    return text_area / bbox_area
+
+
+def _save_pixmap(pix, dst: Path, filename_stem: str) -> str | None:
+    try:
         dst.mkdir(parents=True, exist_ok=True)
         filename = f"{filename_stem}.png"
         destination = dst / filename
-        try:
-            pix.save(destination.as_posix())
-        except Exception:  # noqa: BLE001
-            return None
+        pix.save(destination.as_posix())
         return relative_product_image_path(filename)
-    finally:
-        doc.close()
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _extract_json(text: str) -> dict:
