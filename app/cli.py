@@ -163,7 +163,7 @@ def register_commands(app):
 @click.argument("pdf_path")
 @with_appcontext
 def pdf_probe_command(pdf_path):
-    """Envía un PDF al supervisor Claude activo y muestra el JSON crudo que devuelve.
+    """Envía un PDF al proveedor LLM activo (anthropic u openai) y muestra el resultado.
 
     Uso: flask --app run.py pdf-probe ruta\\al\\catalogo.pdf
     """
@@ -171,7 +171,7 @@ def pdf_probe_command(pdf_path):
 
     from flask import current_app
 
-    from .services.claude_pdf_extractor import ClaudePDFUnavailable, extract_products_with_claude
+    from .services.pdf_extraction import LLMExtractorUnavailable, extract_products_via_llm
 
     provider = (current_app.config.get("LLM_SUPERVISOR_PROVIDER") or "").lower()
     model = current_app.config.get("LLM_SUPERVISOR_MODEL") or ""
@@ -184,8 +184,8 @@ def pdf_probe_command(pdf_path):
     click.echo(f"  model:    {model!r}")
     click.echo(f"  api_key:  {'***' + api_key[-6:] if api_key else '(vacío)'}")
 
-    if provider != "anthropic":
-        click.echo(f"\n✗ El supervisor activo no es anthropic. Poné LLM_SUPERVISOR_ACTIVE=1 (Haiku) en .env.")
+    if provider not in ("anthropic", "openai"):
+        click.echo(f"\n✗ Provider no soportado: {provider!r}. Usá anthropic u openai.")
         return
     if not model or not api_key:
         click.echo("\n✗ Falta model o api_key. Revisá el preset activo en .env.")
@@ -198,15 +198,15 @@ def pdf_probe_command(pdf_path):
 
     size_mb = path.stat().st_size / 1024 / 1024
     click.echo(f"\nPDF: {path}  ({size_mb:.2f} MB)")
-    click.echo("Enviando a Claude... (puede tardar 10-60s)")
+    click.echo(f"Enviando al proveedor {provider}... (puede tardar 1-3 min según el tamaño)")
 
     try:
-        candidates, stats = extract_products_with_claude(
-            path, model=model, api_key=api_key,
+        candidates, stats = extract_products_via_llm(
+            path, provider=provider, model=model, api_key=api_key,
             dst_folder=None, filename_prefix="probe",
         )
-    except ClaudePDFUnavailable as exc:
-        click.echo(f"\n✗ FALLÓ la llamada a Claude: {exc}")
+    except LLMExtractorUnavailable as exc:
+        click.echo(f"\n✗ FALLÓ la llamada a {provider}: {exc}")
         click.echo("\nCausas típicas:")
         click.echo("  - API key inválida o sin saldo (HTTP 401/402)")
         click.echo("  - PDF demasiado grande (>30 MB)")

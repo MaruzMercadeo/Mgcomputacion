@@ -10,10 +10,10 @@ from flask import current_app, g, jsonify, request
 from ...decorators import api_key_required
 from ...extensions import db
 from ...models import AgentSetting, Category, ImportItem, ImportJob, PdfUpload, Product
-from ...services.claude_pdf_extractor import ClaudePDFUnavailable, extract_products_with_claude
 from ...services.csv_parser import parse_products_from_csv
 from ...services.image_importer import build_candidates_from_image
 from ...services.pdf_blocks import PDFBlocksUnavailable, extract_product_blocks_from_pdf
+from ...services.pdf_extraction import try_llm_extraction
 from ...services.pdf_parser import extract_pdf_text
 from ...services.product_importer import (
     candidates_from_blocks,
@@ -422,12 +422,13 @@ def commit_import(job_id):
 
 
 def _pdf_candidates(full_path, company_id: int, job_id: int, summary: dict):
-    """Try Claude end-to-end extraction first; fall back to heuristic if unavailable."""
-    candidates = _try_claude_extractor(full_path, job_id, summary)
+    """Try LLM end-to-end extraction first (any supported provider); fall back to heuristic."""
+    dst_folder = Path(current_app.config["PRODUCT_UPLOAD_FOLDER"])
+    candidates, llm_summary = try_llm_extraction(full_path, job_id, current_app.config, dst_folder)
+    summary.update(llm_summary)
     if candidates:
         return candidates
 
-    dst_folder = Path(current_app.config["PRODUCT_UPLOAD_FOLDER"])
     prefix = f"job{job_id}"
     try:
         blocks = extract_product_blocks_from_pdf(full_path, dst_folder, prefix)
@@ -446,28 +447,3 @@ def _pdf_candidates(full_path, company_id: int, job_id: int, summary: dict):
     summary["pdf_text_chars"] = len(text or "")
     summary["extractor"] = "heuristic_text"
     return parse_products_from_text(text or "")
-
-
-def _try_claude_extractor(full_path, job_id: int, summary: dict):
-    """Return candidates from Claude or None if disabled/failed."""
-    if not current_app.config.get("LLM_SUPERVISOR_ENABLED"):
-        return None
-    provider = (current_app.config.get("LLM_SUPERVISOR_PROVIDER") or "").lower()
-    model = current_app.config.get("LLM_SUPERVISOR_MODEL") or ""
-    api_key = current_app.config.get("LLM_SUPERVISOR_API_KEY") or ""
-    if provider != "anthropic" or not model or not api_key:
-        return None
-
-    dst_folder = Path(current_app.config["PRODUCT_UPLOAD_FOLDER"])
-    prefix = f"job{job_id}"
-    try:
-        candidates, stats = extract_products_with_claude(
-            full_path, model=model, api_key=api_key,
-            dst_folder=dst_folder, filename_prefix=prefix,
-        )
-        summary["extractor"] = "claude"
-        summary.update({f"claude_{k}": v for k, v in stats.items()})
-        return candidates
-    except ClaudePDFUnavailable as exc:
-        summary["claude_error"] = str(exc)[:240]
-        return None

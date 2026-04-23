@@ -64,6 +64,10 @@ def get_supervisor() -> LLMSupervisor:
         from .providers.anthropic_supervisor import AnthropicSupervisor
         return AnthropicSupervisor(model=model, api_key=api_key)
 
+    if provider == "openai":
+        from .providers.openai_supervisor import OpenAISupervisor
+        return OpenAISupervisor(model=model, api_key=api_key)
+
     # Unknown provider — keep the heuristic pipeline safe.
     return NullSupervisor()
 
