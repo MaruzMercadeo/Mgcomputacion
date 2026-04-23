@@ -388,7 +388,7 @@ def imports():
             stored_path=stored_path,
         )
         db.session.add(job)
-        db.session.flush()
+        db.session.commit()  # release DB lock before the long extraction
 
         summary: dict = {"mode": mode}
         try:
@@ -419,8 +419,10 @@ def imports():
             db.session.rollback()
             job.status = "failed"
             job.summary = json.dumps({"error": "exception", "source": source})
-            db.session.add(job)
-            db.session.commit()
+            try:
+                db.session.commit()
+            except Exception:  # noqa: BLE001
+                db.session.rollback()
             flash("No se pudo procesar el archivo.", "danger")
 
         return redirect(url_for("dashboard.imports"))

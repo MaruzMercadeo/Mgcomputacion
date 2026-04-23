@@ -331,7 +331,7 @@ def upload_import():
         stored_path=stored_path,
     )
     db.session.add(job)
-    db.session.flush()
+    db.session.commit()  # release DB lock before the long extraction
 
     summary: dict = {}
     try:
@@ -360,8 +360,10 @@ def upload_import():
         db.session.rollback()
         job.status = "failed"
         job.summary = json.dumps({"error": str(error)[:240]})
-        db.session.add(job)
-        db.session.commit()
+        try:
+            db.session.commit()
+        except Exception:  # noqa: BLE001
+            db.session.rollback()
         log_action("api_import_upload_failed", entity_type="import_job", entity_id=job.id, company_id=company.id)
         return jsonify({"error": "No se pudo procesar el archivo", "import_job": job.to_dict()}), 422
 

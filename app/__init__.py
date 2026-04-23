@@ -1,13 +1,27 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from pathlib import Path
 
 from flask import Flask, render_template
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 from config import Config
 from .cli import register_commands
 from .extensions import db, login_manager, migrate
+
+
+@event.listens_for(Engine, "connect")
+def _set_sqlite_pragmas(dbapi_connection, connection_record):
+    """Reduce 'database is locked' errors on Windows by enabling WAL + generous timeout."""
+    if isinstance(dbapi_connection, sqlite3.Connection):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
 
 
 def create_app(config_class=Config):
