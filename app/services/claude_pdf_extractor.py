@@ -26,14 +26,21 @@ _SYSTEM_PROMPT = """Eres un extractor de productos desde catálogos PDF comercia
 
 Tu tarea: identificar CADA producto real del catálogo y devolverlo como JSON.
 
-Reglas estrictas:
-- NO inventes SKU ni precio. Si no lo ves claro, poné null.
-- NO uses el SKU (ej: RMG-6205) como nombre del producto. El nombre es la descripción (ej: "ANILLOS (MOTOR GASOLINA GX35)").
-- NO cuentes como producto: títulos de sección, logos, encabezados de página, pies de página, publicidades, categorías sueltas.
-- Un producto requiere al menos nombre + (precio O SKU). Sin eso, omitilo.
-- Si una celda del catálogo representa un producto pero falta algún campo, incluilo con los demás completos y el faltante en null.
+Estructura típica de una tarjeta de producto:
+- SKU arriba a la derecha (ej: RMG-4000, RMG-4011, RMG-6205)
+- imagen del producto en el centro
+- NOMBRE en mayúsculas en la franja de color (ej: "ANILLOS (MOTOR GASOLINA 18 HP)")
+- precio abajo a la izquierda con formato "$ X.XX" o "$X.XX" (ej: "$ 0.90", "$ 4.62", "$ 121.80")
+- leyenda "Min. Venta N Unidades" al lado del precio (IGNORAR esa parte)
 
-Devolvé SIEMPRE un JSON válido con este esquema EXACTO, sin texto antes ni después:
+Reglas estrictas:
+- El PRECIO casi siempre está visible en cada tarjeta. Leelo de la etiqueta "$ X.XX" y devolvelo como NÚMERO JSON sin el símbolo $ ni el texto "Min. Venta". Ejemplos correctos: 0.90, 4.62, 121.80. Solo devolvé null si realmente no hay precio en la tarjeta.
+- El NOMBRE es el texto descriptivo en mayúsculas (ej: "AISLANTE CARBURADOR (MOTOR GASOLINA 18 HP)"), NO el SKU. Jamás uses un código tipo "RMG-4000" como nombre.
+- El SKU es el código alfanumérico con guión (ej: RMG-4000, RMG-6205). Devolvelo como string.
+- NO cuentes como producto: títulos de sección ("MOTOR GASOLINA 18HP • 198F"), logos de marca (MAG, MAG Tools, Guerra Motor's), encabezados/pies de página, publicidades.
+- Un producto requiere al menos nombre + (precio O SKU). Sin eso, omitilo.
+
+Devolvé SIEMPRE un JSON válido con este esquema EXACTO, sin texto antes ni después, sin envolver en bloques de código:
 {
   "products": [
     {
@@ -50,8 +57,7 @@ Devolvé SIEMPRE un JSON válido con este esquema EXACTO, sin texto antes ni des
   ]
 }
 
-Las coordenadas bbox son las del PDF en puntos (points, no pixels). Si no podés ubicarlas con precisión, poné null.
-No envuelvas el JSON en bloques de código."""
+Las coordenadas bbox son las del PDF en puntos (points, no pixels), delimitando la tarjeta entera del producto. Si no podés ubicarlas con precisión, poné null."""
 
 
 def extract_products_with_claude(
@@ -215,12 +221,50 @@ def _build_candidates(
 
 
 def _to_decimal(raw) -> Decimal | None:
+    """Accept numbers or strings that may carry currency symbols or thousands separators."""
     if raw is None or raw == "":
         return None
+    if isinstance(raw, bool):  # bool is subclass of int — guard explicitly
+        return None
+    if isinstance(raw, (int, float)):
+        try:
+            value = Decimal(str(raw))
+        except InvalidOperation:
+            return None
+        return value if value >= 0 else None
+
+    cleaned = str(raw).strip()
+    if not cleaned:
+        return None
+
+    # Strip currency symbols / common noise
+    for token in ("$", "€", "USD", "usd", "Bs", "bs", "S/.", "Gs", "COP", "MXN", "ARS"):
+        cleaned = cleaned.replace(token, "")
+    cleaned = cleaned.replace(" ", "").replace(" ", "")
+    if not cleaned:
+        return None
+
+    # Normalize decimal/thousands separators
+    if "," in cleaned and "." in cleaned:
+        if cleaned.rfind(",") > cleaned.rfind("."):
+            # European: "1.234,56" -> "1234.56"
+            cleaned = cleaned.replace(".", "").replace(",", ".")
+        else:
+            # US with thousands: "1,234.56" -> "1234.56"
+            cleaned = cleaned.replace(",", "")
+    elif "," in cleaned:
+        # Heuristic: 3-digit group after comma is thousands, else decimal
+        parts = cleaned.split(",")
+        if len(parts[-1]) == 3 and all(p.isdigit() for p in parts):
+            cleaned = "".join(parts)
+        else:
+            cleaned = cleaned.replace(",", ".")
+
     try:
-        return Decimal(str(raw))
+        value = Decimal(cleaned)
     except InvalidOperation:
         return None
+    return value if value >= 0 else None
 
 
 def _parse_bbox(raw) -> tuple[float, float, float, float] | None:
