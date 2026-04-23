@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import click
 from flask.cli import with_appcontext
+from sqlalchemy import inspect
 
 from .extensions import db
 from .models import User, Company, AgentSetting, ApiKey
+
+
+BASELINE_REVISION = "bb0ccbd48cf3"
 
 
 @click.command("init-db")
@@ -12,6 +16,32 @@ from .models import User, Company, AgentSetting, ApiKey
 def init_db_command():
     db.create_all()
     click.echo("Base de datos creada.")
+
+
+@click.command("upgrade-db")
+@with_appcontext
+def upgrade_db_command():
+    """Idempotent: stamps baseline on pre-migration DBs, then upgrades to head.
+
+    Safe to run on empty, existing-but-unmigrated, or already-migrated DBs.
+    """
+    from flask_migrate import stamp, upgrade
+
+    tables = set(inspect(db.engine).get_table_names())
+
+    if "alembic_version" not in tables:
+        if "users" in tables and "import_jobs" not in tables:
+            click.echo("DB con esquema baseline detectada: marcando baseline...")
+            stamp(revision=BASELINE_REVISION)
+        elif "import_jobs" in tables:
+            click.echo("DB ya al día manualmente: marcando head...")
+            stamp(revision="head")
+        else:
+            click.echo("DB vacía: se creará todo con el upgrade.")
+
+    click.echo("Aplicando migraciones pendientes...")
+    upgrade()
+    click.echo("Listo.")
 
 
 @click.command("seed-admin")
@@ -64,5 +94,6 @@ def generate_api_key_command(company_id, label):
 
 def register_commands(app):
     app.cli.add_command(init_db_command)
+    app.cli.add_command(upgrade_db_command)
     app.cli.add_command(seed_admin_command)
     app.cli.add_command(generate_api_key_command)
