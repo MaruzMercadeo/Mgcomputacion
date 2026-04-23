@@ -68,10 +68,14 @@ def extract_products_with_claude(
     filename_prefix: str = "job",
     timeout: int = DEFAULT_TIMEOUT,
 ) -> tuple[list[ProductCandidate], dict]:
-    """Send the PDF to Claude Messages API and get structured products back.
+    """Send the PDF to Claude Messages API, one page at a time, and get products.
 
-    Returns (candidates, stats). Raises ClaudePDFUnavailable on any failure
-    so the caller can fall back to the heuristic pipeline.
+    Processing per page keeps each response under 8K output tokens so we never
+    truncate, regardless of catalog size. The original PDF is used for image
+    cropping at the end.
+
+    Returns (candidates, stats). Raises ClaudePDFUnavailable on any hard
+    failure so the caller can fall back to the heuristic pipeline.
     """
     if not model or not api_key:
         raise ClaudePDFUnavailable("model o api_key vacíos")
@@ -81,13 +85,93 @@ def extract_products_with_claude(
         raise ClaudePDFUnavailable(f"PDF no encontrado: {path}")
 
     try:
-        pdf_bytes = path.read_bytes()
+        file_size = path.stat().st_size
     except Exception as exc:  # noqa: BLE001
         raise ClaudePDFUnavailable(f"No se pudo leer el PDF: {exc}") from exc
+    if file_size > MAX_PDF_BYTES:
+        raise ClaudePDFUnavailable(f"PDF demasiado grande ({file_size} bytes)")
 
-    if len(pdf_bytes) > MAX_PDF_BYTES:
-        raise ClaudePDFUnavailable(f"PDF demasiado grande ({len(pdf_bytes)} bytes)")
+    try:
+        import fitz  # type: ignore
+    except ImportError as exc:
+        raise ClaudePDFUnavailable(f"PyMuPDF no instalado: {exc}") from exc
 
+    try:
+        doc = fitz.open(str(path))
+    except Exception as exc:  # noqa: BLE001
+        raise ClaudePDFUnavailable(f"No se pudo abrir el PDF: {exc}") from exc
+
+    total_pages = doc.page_count
+    all_products: list[dict] = []
+    input_total = 0
+    output_total = 0
+    truncated_pages = 0
+    failed_pages: list[int] = []
+    last_error: str = ""
+
+    try:
+        for page_num in range(1, total_pages + 1):
+            try:
+                page_bytes = _single_page_pdf_bytes(doc, page_num - 1)
+                products, call_stats = _call_claude_for_pdf(
+                    page_bytes, model, api_key, timeout
+                )
+            except Exception as exc:  # noqa: BLE001
+                failed_pages.append(page_num)
+                last_error = str(exc)[:200]
+                continue
+
+            for product in products:
+                if isinstance(product, dict):
+                    product["page"] = page_num  # override: each sub-PDF looks like page 1 to Claude
+            all_products.extend(p for p in products if isinstance(p, dict))
+
+            input_total += call_stats.get("input_tokens", 0)
+            output_total += call_stats.get("output_tokens", 0)
+            if call_stats.get("truncated"):
+                truncated_pages += 1
+    finally:
+        doc.close()
+
+    # If every page failed, surface the error so the caller falls back.
+    if total_pages > 0 and len(failed_pages) == total_pages:
+        raise ClaudePDFUnavailable(f"Todas las páginas fallaron. Último error: {last_error}")
+
+    candidates = _build_candidates(all_products, path, dst_folder, filename_prefix)
+
+    stats = {
+        "input_tokens": input_total,
+        "output_tokens": output_total,
+        "detected": len(candidates),
+        "raw_products": len(all_products),
+        "pages_processed": total_pages,
+        "pages_failed": len(failed_pages),
+        "truncated_pages": truncated_pages,
+        "truncated": truncated_pages > 0,
+        "stop_reason": "ok" if truncated_pages == 0 else "partial_truncation",
+    }
+    return candidates, stats
+
+
+def _single_page_pdf_bytes(doc, page_index: int) -> bytes:
+    """Serialize a single page of an open fitz doc as a standalone PDF byte string."""
+    import fitz  # type: ignore
+
+    out = fitz.open()
+    try:
+        out.insert_pdf(doc, from_page=page_index, to_page=page_index)
+        return out.tobytes()
+    finally:
+        out.close()
+
+
+def _call_claude_for_pdf(
+    pdf_bytes: bytes,
+    model: str,
+    api_key: str,
+    timeout: int,
+) -> tuple[list, dict]:
+    """POST a PDF (whole or single page) to Claude and return raw product dicts + stats."""
     body = json.dumps({
         "model": model,
         "max_tokens": MAX_TOKENS,
@@ -105,7 +189,7 @@ def extract_products_with_claude(
                 },
                 {
                     "type": "text",
-                    "text": "Extraé todos los productos de este catálogo siguiendo el esquema JSON indicado. Respondé SOLO con el JSON.",
+                    "text": "Extraé todos los productos de esta página siguiendo el esquema JSON indicado. Respondé SOLO con el JSON.",
                 },
             ],
         }],
@@ -122,17 +206,10 @@ def extract_products_with_claude(
         method="POST",
     )
 
-    try:
-        with urlrequest.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8")
-    except Exception as exc:  # noqa: BLE001
-        raise ClaudePDFUnavailable(f"Error HTTP: {exc}") from exc
+    with urlrequest.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read().decode("utf-8")
 
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ClaudePDFUnavailable(f"Respuesta no-JSON: {exc}") from exc
-
+    payload = json.loads(raw)
     text = ""
     for block in payload.get("content", []):
         if block.get("type") == "text":
@@ -144,34 +221,20 @@ def extract_products_with_claude(
     try:
         data = _extract_json(text)
     except ValueError:
-        # JSON malformed — most commonly because max_tokens cut the response
-        # mid-object. Try recovering all products up to the last complete one.
         recovered = _recover_truncated_products(text)
-        if recovered is None:
-            hint = " (respuesta truncada por max_tokens)" if was_truncated else ""
-            preview = (text[:200] + "...") if len(text) > 200 else text
-            raise ClaudePDFUnavailable(
-                f"No pude parsear JSON del modelo{hint}. "
-                f"Primeros chars: {preview!r}"
-            )
-        data = {"products": recovered}
+        data = {"products": recovered or []}
 
     products = data.get("products") or []
     if not isinstance(products, list):
         products = []
 
-    candidates = _build_candidates(products, path, dst_folder, filename_prefix)
-
     usage = payload.get("usage", {}) or {}
-    stats = {
+    return products, {
         "input_tokens": int(usage.get("input_tokens") or 0),
         "output_tokens": int(usage.get("output_tokens") or 0),
-        "detected": len(candidates),
-        "raw_products": len(products),
         "stop_reason": stop_reason,
         "truncated": was_truncated,
     }
-    return candidates, stats
 
 
 def _recover_truncated_products(text: str) -> list | None:

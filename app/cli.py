@@ -215,15 +215,18 @@ def pdf_probe_command(pdf_path):
         return
 
     click.echo(f"\n✓ Claude respondió.")
-    click.echo(f"  stop_reason:   {stats.get('stop_reason', '?')}")
-    click.echo(f"  truncated:     {stats.get('truncated', False)}")
-    click.echo(f"  input_tokens:  {stats.get('input_tokens', 0)}")
-    click.echo(f"  output_tokens: {stats.get('output_tokens', 0)}")
+    click.echo(f"  pages_processed:  {stats.get('pages_processed', '?')}")
+    click.echo(f"  pages_failed:     {stats.get('pages_failed', 0)}")
+    click.echo(f"  truncated_pages:  {stats.get('truncated_pages', 0)}")
+    click.echo(f"  input_tokens:     {stats.get('input_tokens', 0)}")
+    click.echo(f"  output_tokens:    {stats.get('output_tokens', 0)}")
     click.echo(f"  productos detectados: {stats.get('detected', 0)}")
     cost = stats.get("input_tokens", 0) / 1_000_000 + stats.get("output_tokens", 0) * 5 / 1_000_000
-    click.echo(f"  costo aprox:   ${cost:.4f}")
-    if stats.get("truncated"):
-        click.echo("\n⚠ La respuesta se cortó por max_tokens. Recuperé los productos completos, pero puede faltar alguno del final del PDF.")
+    click.echo(f"  costo aprox:      ${cost:.4f}")
+    if stats.get("pages_failed"):
+        click.echo(f"\n⚠ {stats['pages_failed']} página(s) fallaron (rate limit/timeout). Probá de nuevo dentro de un minuto.")
+    if stats.get("truncated_pages"):
+        click.echo(f"\n⚠ {stats['truncated_pages']} página(s) tuvieron respuestas truncadas. Algunos productos pueden faltar.")
 
     if not candidates:
         click.echo("\n⚠ Claude respondió pero no detectó ningún producto en este PDF.")
