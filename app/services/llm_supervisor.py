@@ -89,3 +89,66 @@ def needs_supervision(
         if len(only.name) < 5 or name_letters < 3:
             return True
     return False
+
+
+def _candidate_needs_review(candidate: ProductCandidate, mode: str | None) -> bool:
+    """Per-candidate gate used to decide whether to spend an LLM call on it."""
+    if mode and mode.lower() in ("advanced", "supervised"):
+        return True
+    if "needs_review" in candidate.warnings or "text_not_paired" in candidate.warnings:
+        return True
+    if candidate.price <= 0:
+        return True
+    if candidate.confidence is not None and candidate.confidence < 0.5:
+        return True
+    name = candidate.name or ""
+    name_letters = sum(1 for c in name if c.isalpha())
+    if len(name) < 5 or name_letters < 3:
+        return True
+    return False
+
+
+def refine_candidates_with_supervisor(
+    candidates: list[ProductCandidate],
+    mode: str | None,
+    ocr_text: str = "",
+    max_calls: int | None = None,
+) -> tuple[list[ProductCandidate], dict]:
+    """Run each low-confidence candidate through the active supervisor.
+
+    Returns (refined_candidates, stats). Never raises — errors are tagged
+    as warnings on the offending candidate so the import flow keeps going.
+    """
+    stats = {"calls": 0, "skipped": 0, "provider": "null", "cap": 0}
+    supervisor = get_supervisor()
+    provider_name = getattr(supervisor, "name", supervisor.__class__.__name__.lower())
+    stats["provider"] = provider_name
+
+    if isinstance(supervisor, NullSupervisor) or not candidates:
+        return list(candidates), stats
+
+    if max_calls is None:
+        max_calls = current_app.config.get("LLM_MAX_CALLS_PER_JOB", 40)
+    stats["cap"] = max_calls
+
+    refined: list[ProductCandidate] = []
+    for candidate in candidates:
+        if not _candidate_needs_review(candidate, mode):
+            refined.append(candidate)
+            continue
+        if stats["calls"] >= max_calls:
+            stats["skipped"] += 1
+            refined.append(candidate)
+            continue
+
+        request = SupervisionRequest(
+            ocr_text=ocr_text or (candidate.description or "") or candidate.name,
+            heuristic_candidates=[candidate],
+            image_path=candidate.image_path,
+            hints={"mode": mode or "standard"},
+        )
+        result = supervisor.review(request)
+        refined.extend(result.candidates or [candidate])
+        stats["calls"] += 1
+
+    return refined, stats
