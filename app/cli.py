@@ -44,6 +44,64 @@ def upgrade_db_command():
     click.echo("Listo.")
 
 
+@click.command("llm-ping")
+@with_appcontext
+def llm_ping_command():
+    """Hace una llamada mínima al supervisor LLM activo y muestra el resultado."""
+    from decimal import Decimal
+
+    from flask import current_app
+
+    from .services.llm_supervisor import NullSupervisor, SupervisionRequest, get_supervisor
+    from .services.product_importer import ProductCandidate
+
+    active = (
+        __import__("os").environ.get("LLM_SUPERVISOR_ACTIVE")
+        or current_app.config.get("LLM_SUPERVISOR_ACTIVE")
+        or "off"
+    )
+    provider = current_app.config.get("LLM_SUPERVISOR_PROVIDER") or "(vacío)"
+    model = current_app.config.get("LLM_SUPERVISOR_MODEL") or "(vacío)"
+    api_key = current_app.config.get("LLM_SUPERVISOR_API_KEY") or ""
+
+    click.echo("=== Config actual ===")
+    click.echo(f"  LLM_SUPERVISOR_ACTIVE: {active}")
+    click.echo(f"  provider:              {provider}")
+    click.echo(f"  model:                 {model}")
+    click.echo(f"  api_key:               {'***' + api_key[-6:] if api_key else '(vacío)'}")
+
+    sup = get_supervisor()
+    if isinstance(sup, NullSupervisor):
+        click.echo("\nSupervisor activo: NullSupervisor (no se hace llamada real).")
+        click.echo("Motivos posibles: ACTIVE=off, PROVIDER/MODEL/API_KEY vacíos, o provider no soportado.")
+        return
+
+    click.echo(f"\nSupervisor activo: {sup.__class__.__name__}")
+    click.echo("Enviando prompt de prueba...\n")
+
+    request = SupervisionRequest(
+        ocr_text="Producto de prueba TEST-001, precio 10.00",
+        heuristic_candidates=[
+            ProductCandidate(name="TEST-001", price=Decimal("0"), sku=None, stock=0)
+        ],
+        image_path=None,
+        hints={"mode": "advanced"},
+    )
+    result = sup.review(request)
+
+    click.echo(f"  notes: {result.notes}")
+    for c in result.candidates:
+        click.echo(
+            f"  → name={c.name!r}  sku={c.sku!r}  price={c.price}  "
+            f"conf={c.confidence}  warnings={list(c.warnings)}"
+        )
+
+    if result.notes.startswith("fallback:"):
+        click.echo("\n✗ La llamada FALLÓ. Revisá API key, modelo y conexión.")
+    else:
+        click.echo("\n✓ El supervisor respondió correctamente.")
+
+
 @click.command("seed-admin")
 @click.option("--email", prompt=True)
 @click.option("--password", prompt=True, hide_input=True, confirmation_prompt=True)
@@ -95,5 +153,6 @@ def generate_api_key_command(company_id, label):
 def register_commands(app):
     app.cli.add_command(init_db_command)
     app.cli.add_command(upgrade_db_command)
+    app.cli.add_command(llm_ping_command)
     app.cli.add_command(seed_admin_command)
     app.cli.add_command(generate_api_key_command)

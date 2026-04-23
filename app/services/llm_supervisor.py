@@ -55,11 +55,16 @@ def get_supervisor() -> LLMSupervisor:
         return NullSupervisor()
 
     provider = (current_app.config.get("LLM_SUPERVISOR_PROVIDER") or "").lower()
-    if not provider:
+    model = current_app.config.get("LLM_SUPERVISOR_MODEL") or ""
+    api_key = current_app.config.get("LLM_SUPERVISOR_API_KEY") or ""
+    if not provider or not model or not api_key:
         return NullSupervisor()
 
-    # Future providers register here. Until a real implementation exists,
-    # we fall back to NullSupervisor so misconfiguration never breaks imports.
+    if provider == "anthropic":
+        from .providers.anthropic_supervisor import AnthropicSupervisor
+        return AnthropicSupervisor(model=model, api_key=api_key)
+
+    # Unknown provider — keep the heuristic pipeline safe.
     return NullSupervisor()
 
 
