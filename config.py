@@ -19,3 +19,15 @@ class Config:
     ALLOWED_PDF_EXTENSIONS = {"pdf"}
     ALLOWED_CSV_EXTENSIONS = {"csv"}
     ALLOWED_IMPORT_EXTENSIONS = ALLOWED_PDF_EXTENSIONS | ALLOWED_CSV_EXTENSIONS | ALLOWED_IMAGE_EXTENSIONS
+
+    # OCR local (requires Tesseract binary installed on host)
+    OCR_ENABLED = os.getenv("OCR_ENABLED", "true").lower() in ("1", "true", "yes")
+    OCR_LANGUAGES = os.getenv("OCR_LANGUAGES", "spa+eng")
+    OCR_MIN_CHARS = int(os.getenv("OCR_MIN_CHARS", "20"))
+    OCR_MAX_IMAGE_DIMENSION = int(os.getenv("OCR_MAX_IMAGE_DIMENSION", "2000"))
+
+    # LLM supervisor (escalation only when heuristics produce low-confidence results)
+    LLM_SUPERVISOR_ENABLED = os.getenv("LLM_SUPERVISOR_ENABLED", "false").lower() in ("1", "true", "yes")
+    LLM_SUPERVISOR_PROVIDER = os.getenv("LLM_SUPERVISOR_PROVIDER", "")  # e.g. "openai"
+    LLM_SUPERVISOR_MODEL = os.getenv("LLM_SUPERVISOR_MODEL", "")        # e.g. "gpt-5-nano"
+    LLM_SUPERVISOR_API_KEY = os.getenv("LLM_SUPERVISOR_API_KEY", "")

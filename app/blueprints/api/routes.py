@@ -11,7 +11,7 @@ from ...decorators import api_key_required
 from ...extensions import db
 from ...models import AgentSetting, Category, ImportItem, ImportJob, PdfUpload, Product
 from ...services.csv_parser import parse_products_from_csv
-from ...services.image_importer import build_candidate_from_image
+from ...services.image_importer import build_candidates_from_image
 from ...services.pdf_parser import extract_pdf_text
 from ...services.product_importer import (
     commit_drafts,
@@ -318,6 +318,8 @@ def upload_import():
     stored_path = str((target_folder / stored_filename).relative_to(Path(current_app.root_path)))
     full_path = target_folder / stored_filename
 
+    mode = (request.form.get("mode") or "").strip().lower() or None
+
     job = ImportJob(
         company_id=company.id,
         source=source,
@@ -328,6 +330,7 @@ def upload_import():
     db.session.add(job)
     db.session.flush()
 
+    summary: dict = {}
     try:
         if source == "pdf":
             text = extract_pdf_text(full_path)
@@ -335,11 +338,21 @@ def upload_import():
         elif source == "csv":
             candidates = parse_products_from_csv(full_path)
         else:
-            candidates = [build_candidate_from_image(stored_filename, upload.filename)]
+            outcome = build_candidates_from_image(stored_filename, upload.filename, full_path, mode=mode)
+            candidates = outcome.candidates
+            summary.update({
+                "ocr_chars": outcome.ocr_chars,
+                "supervisor": outcome.supervisor,
+                "used_supervisor": outcome.used_supervisor,
+                "fallback_reason": outcome.fallback_reason,
+            })
 
         items = stage_candidates_as_drafts(job, candidates)
         job.status = "ready"
-        job.summary = json.dumps({"detected": len(items)})
+        summary["detected"] = len(items)
+        if mode:
+            summary["mode"] = mode
+        job.summary = json.dumps(summary)
         db.session.commit()
     except Exception as error:  # noqa: BLE001
         db.session.rollback()

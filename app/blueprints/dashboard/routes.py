@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -9,9 +10,14 @@ from flask_login import current_user
 
 from ...decorators import approved_required
 from ...extensions import db
-from ...models import AgentSetting, ApiKey, Category, PdfUpload, Product
+from ...models import AgentSetting, ApiKey, Category, ImportItem, ImportJob, PdfUpload, Product
+from ...services.image_importer import build_candidates_from_image
 from ...services.pdf_parser import extract_pdf_text
-from ...services.product_importer import import_products_from_text
+from ...services.product_importer import (
+    commit_drafts,
+    import_products_from_text,
+    stage_candidates_as_drafts,
+)
 from ...utils import allowed_file, log_action, relative_pdf_path, relative_product_image_path, save_upload
 from . import bp
 
@@ -316,6 +322,107 @@ def pdf_uploads():
 
     uploads = company.pdf_uploads.order_by(PdfUpload.created_at.desc()).all()
     return render_template("dashboard/pdf_uploads.html", uploads=uploads)
+
+
+@bp.route("/panel/imports", methods=["GET", "POST"])
+@approved_required
+def imports():
+    company = _company()
+
+    if request.method == "POST":
+        action = (request.form.get("action") or "upload").lower()
+
+        if action == "commit":
+            try:
+                job_id = int(request.form.get("job_id") or 0)
+            except ValueError:
+                job_id = 0
+            job = ImportJob.query.get(job_id) if job_id else None
+            if not job or job.company_id != company.id:
+                flash("Trabajo de importación no encontrado.", "danger")
+                return redirect(url_for("dashboard.imports"))
+            try:
+                result = commit_drafts(job)
+                remaining = job.items.filter_by(status="draft").count()
+                job.status = "committed" if remaining == 0 else "ready"
+                db.session.commit()
+                log_action("commit_image_import", entity_type="import_job", entity_id=job.id,
+                           company_id=company.id, user_id=current_user.id,
+                           details=json.dumps(result))
+                flash(f"Importados {result['committed']} productos. {result['skipped']} omitidos.", "success")
+            except Exception:  # noqa: BLE001
+                db.session.rollback()
+                flash("No se pudo confirmar la importación.", "danger")
+            return redirect(url_for("dashboard.imports"))
+
+        image = request.files.get("image")
+        if not image or not image.filename:
+            flash("Selecciona o captura una imagen.", "danger")
+            return redirect(url_for("dashboard.imports"))
+        if not allowed_file(image.filename, current_app.config["ALLOWED_IMAGE_EXTENSIONS"]):
+            flash("Formato de imagen no permitido.", "danger")
+            return redirect(url_for("dashboard.imports"))
+
+        target_folder = Path(current_app.config["PRODUCT_UPLOAD_FOLDER"])
+        stored_filename = save_upload(image, target_folder)
+        full_path = target_folder / stored_filename
+        stored_path = str(full_path.relative_to(Path(current_app.root_path)))
+        mode = (request.form.get("mode") or "").strip().lower() or None
+
+        job = ImportJob(
+            company_id=company.id,
+            user_id=current_user.id,
+            source="image",
+            status="processing",
+            original_filename=image.filename,
+            stored_path=stored_path,
+        )
+        db.session.add(job)
+        db.session.flush()
+
+        summary: dict = {}
+        try:
+            outcome = build_candidates_from_image(stored_filename, image.filename, full_path, mode=mode)
+            stage_candidates_as_drafts(job, outcome.candidates)
+            job.status = "ready"
+            summary = {
+                "detected": len(outcome.candidates),
+                "ocr_chars": outcome.ocr_chars,
+                "supervisor": outcome.supervisor,
+                "used_supervisor": outcome.used_supervisor,
+                "fallback_reason": outcome.fallback_reason,
+                "mode": mode,
+            }
+            job.summary = json.dumps(summary)
+            db.session.commit()
+            log_action("upload_image_import", entity_type="import_job", entity_id=job.id,
+                       company_id=company.id, user_id=current_user.id)
+            if outcome.fallback_reason:
+                flash(f"Imagen guardada. Detectados {len(outcome.candidates)} borrador(es). Aviso: {outcome.fallback_reason}", "warning")
+            else:
+                flash(f"Imagen procesada. Detectados {len(outcome.candidates)} borrador(es).", "success")
+        except Exception:  # noqa: BLE001
+            db.session.rollback()
+            job.status = "failed"
+            job.summary = json.dumps({"error": "exception"})
+            db.session.add(job)
+            db.session.commit()
+            flash("No se pudo procesar la imagen.", "danger")
+
+        return redirect(url_for("dashboard.imports"))
+
+    jobs = (
+        ImportJob.query
+        .filter_by(company_id=company.id, source="image")
+        .order_by(ImportJob.created_at.desc())
+        .limit(25)
+        .all()
+    )
+    items_by_job = {
+        job.id: ImportItem.query.filter_by(job_id=job.id).order_by(ImportItem.id.asc()).all()
+        for job in jobs
+    }
+    return render_template("dashboard/imports.html", jobs=jobs, items_by_job=items_by_job)
 
 
 @bp.route("/panel/api-keys", methods=["GET", "POST"])

@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+{% block title %}Imágenes | MGComputacion{% endblock %}
+{% block content %}
+<section class="dashboard-shell container">
+  <div class="dashboard-grid">
+    {% include 'dashboard/_sidebar.html' %}
+    <div class="dashboard-main">
+      <div class="panel">
+        <div class="section-header">
+          <h1>Importar desde imagen</h1>
+          <p>Subí una foto de una etiqueta, lista o catálogo. El sistema aplica OCR local y genera borradores de productos para revisar.</p>
+        </div>
+
+        <form method="post" enctype="multipart/form-data" class="form-grid compact-form">
+          <label>
+            <span>Imagen (archivo o cámara)</span>
+            <input type="file" name="image" accept="image/*" capture="environment" required>
+          </label>
+          <label>
+            <span>Modo</span>
+            <select name="mode">
+              <option value="">Estándar (OCR local)</option>
+              <option value="advanced">Avanzado (supervisión)</option>
+            </select>
+          </label>
+          <div>
+            <button class="btn btn-primary" type="submit">Subir imagen</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="panel">
+        <div class="section-header compact">
+          <h2>Últimas importaciones</h2>
+        </div>
+        <div class="stack-list">
+          {% for job in jobs %}
+          <div class="stack-card">
+            <div class="stack-card-header">
+              <strong>{{ job.original_filename }}</strong>
+              <span class="status-badge status-{{ 'approved' if job.status in ['ready', 'committed'] else 'warning' }}">{{ job.status }}</span>
+            </div>
+            <p class="muted small">{{ job.created_at.strftime('%Y-%m-%d %H:%M') }} · {{ items_by_job[job.id] | length }} borrador(es)</p>
+            {% if job.summary %}
+              <p class="muted small">Resumen: {{ job.summary }}</p>
+            {% endif %}
+
+            {% set drafts = items_by_job[job.id] | selectattr('status', 'equalto', 'draft') | list %}
+            {% if drafts %}
+              <ul class="muted small" style="margin:0 0 .5rem 1rem;">
+                {% for item in drafts[:5] %}
+                  <li>{{ item.payload[:140] }}{% if item.payload|length > 140 %}…{% endif %}</li>
+                {% endfor %}
+                {% if drafts|length > 5 %}<li>+ {{ drafts|length - 5 }} más</li>{% endif %}
+              </ul>
+              <form method="post" style="display:inline;">
+                <input type="hidden" name="action" value="commit">
+                <input type="hidden" name="job_id" value="{{ job.id }}">
+                <button class="btn btn-primary" type="submit">Confirmar {{ drafts|length }} producto(s)</button>
+              </form>
+            {% elif job.status == 'committed' %}
+              <p class="muted small">Productos importados.</p>
+            {% endif %}
+          </div>
+          {% else %}
+          <p class="muted">Todavía no hay importaciones desde imagen.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
