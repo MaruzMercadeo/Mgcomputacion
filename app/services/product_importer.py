@@ -23,6 +23,11 @@ SKU_RE = re.compile(r"(?i)\b(?:sku|codigo|cod|ref|referencia)\s*[:#\-]?\s*([A-Za
 STOCK_RE = re.compile(r"(?i)\b(?:stock|cantidad|qty|existencia|disponible)\s*[:#\-]?\s*(\d+)")
 HEADER_RE = re.compile(r"(?i)^(producto|nombre|descripcion|precio|stock|sku|codigo|catalogo)\b")
 
+MIN_VENTA_RE = re.compile(r"(?i)m[ií]n\.?\s*venta")
+UNITS_LINE_RE = re.compile(r"(?i)^\s*(\d+)\s*unidades?\s*$")
+PRICE_LINE_RE = re.compile(r"^\s*\$?\s*([0-9]+(?:[.,][0-9]+)?)\s*$")
+SKU_LINE_RE = re.compile(r"^\s*([A-Z]{2,}[-_./]?[A-Z0-9]{2,}(?:[-_./][A-Z0-9]+)*)\s*$")
+
 
 @dataclass(frozen=True)
 class ProductCandidate:
@@ -38,6 +43,11 @@ class ProductCandidate:
 
 def parse_products_from_text(text: str) -> list[ProductCandidate]:
     """Detect product rows from plain text extracted from a PDF catalog."""
+    if MIN_VENTA_RE.search(text):
+        block_candidates = parse_products_from_blocks(text)
+        if block_candidates:
+            return block_candidates
+
     candidates: list[ProductCandidate] = []
     seen_keys: set[tuple[str, str | None, str]] = set()
 
@@ -57,6 +67,116 @@ def parse_products_from_text(text: str) -> list[ProductCandidate]:
         candidates.append(candidate)
 
     return candidates
+
+
+def parse_products_from_blocks(text: str) -> list[ProductCandidate]:
+    """Parse PDFs laid out as multi-line blocks anchored at "Min. Venta":
+
+        NAME (may span 1-2 lines)
+        SKU (optional)
+        Min. Venta
+        N Unidades
+        PRICE
+    """
+    lines = [line.strip() for line in text.splitlines()]
+    total = len(lines)
+    anchors = [i for i, line in enumerate(lines) if MIN_VENTA_RE.search(line)]
+    if not anchors:
+        return []
+
+    candidates: list[ProductCandidate] = []
+    seen: set[tuple[str, str | None, str]] = set()
+    prev_end = 0
+
+    for anchor_idx in anchors:
+        stock_idx = _find_next_match(lines, anchor_idx + 1, anchor_idx + 5, UNITS_LINE_RE)
+        if stock_idx is None:
+            continue
+        stock = int(UNITS_LINE_RE.match(lines[stock_idx]).group(1))
+
+        price_info = _find_price_after(lines, stock_idx + 1, stock_idx + 6)
+        if price_info is None:
+            continue
+        price, price_idx = price_info
+
+        header_lines = _collect_header_block(lines, anchor_idx, prev_end)
+        if not header_lines:
+            prev_end = price_idx + 1
+            continue
+
+        sku: str | None = None
+        if SKU_LINE_RE.match(header_lines[-1]):
+            sku = header_lines[-1]
+            header_lines = header_lines[:-1]
+
+        if not header_lines:
+            prev_end = price_idx + 1
+            continue
+
+        name = " ".join(header_lines).strip()
+        if len(name) < 3:
+            prev_end = price_idx + 1
+            continue
+
+        name = name[:180]
+        key = (name.lower(), sku.lower() if sku else None, str(price))
+        if key not in seen:
+            seen.add(key)
+            candidates.append(
+                ProductCandidate(
+                    name=name,
+                    price=price,
+                    description=name,
+                    sku=sku[:80] if sku else None,
+                    stock=stock,
+                )
+            )
+
+        prev_end = price_idx + 1
+        if prev_end >= total:
+            break
+
+    return candidates
+
+
+def _collect_header_block(lines: list[str], anchor_idx: int, floor: int) -> list[str]:
+    """Walk backward from the anchor collecting non-empty lines until hitting a blank line."""
+    block: list[str] = []
+    j = anchor_idx - 1
+    while j >= floor:
+        line = lines[j]
+        if not line:
+            if block:
+                break
+            j -= 1
+            continue
+        block.insert(0, line)
+        j -= 1
+    return block
+
+
+def _find_next_match(lines: list[str], start: int, end: int, pattern: re.Pattern) -> int | None:
+    limit = min(end, len(lines))
+    for i in range(start, limit):
+        if pattern.match(lines[i]):
+            return i
+    return None
+
+
+def _find_price_after(lines: list[str], start: int, end: int) -> tuple[Decimal, int] | None:
+    limit = min(end, len(lines))
+    for i in range(start, limit):
+        line = lines[i]
+        if not line:
+            continue
+        match = PRICE_LINE_RE.match(line)
+        if not match:
+            return None
+        price = _parse_decimal(match.group(1))
+        if price is None:
+            return None
+        return price, i
+    return None
 
 
 def import_products_from_text(company_id: int, text: str) -> dict[str, Any]:
