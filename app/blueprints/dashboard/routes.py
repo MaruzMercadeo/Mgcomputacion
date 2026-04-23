@@ -11,6 +11,7 @@ from flask_login import current_user
 from ...decorators import approved_required
 from ...extensions import db
 from ...models import AgentSetting, ApiKey, Category, ImportItem, ImportJob, PdfUpload, Product
+from ...services.claude_pdf_extractor import ClaudePDFUnavailable, extract_products_with_claude
 from ...services.csv_parser import parse_products_from_csv
 from ...services.image_importer import build_candidates_from_image
 from ...services.pdf_blocks import PDFBlocksUnavailable, extract_product_blocks_from_pdf
@@ -497,7 +498,11 @@ def _target_folder_for(source: str) -> Path:
 
 
 def _pdf_candidates_panel(full_path, job_id: int, summary: dict):
-    """Same strategy as the API: blocks first, text fallback."""
+    """Try Claude end-to-end first; fall back to heuristic if disabled/failed."""
+    claude = _try_claude_panel(full_path, job_id, summary)
+    if claude:
+        return claude
+
     dst = Path(current_app.config["PRODUCT_UPLOAD_FOLDER"])
     prefix = f"job{job_id}"
     try:
@@ -508,10 +513,36 @@ def _pdf_candidates_panel(full_path, job_id: int, summary: dict):
 
     if blocks:
         summary["pdf_blocks"] = len(blocks)
-        candidates = candidates_from_blocks(blocks)
-        if candidates:
-            return candidates
+        heuristic = candidates_from_blocks(blocks)
+        if heuristic:
+            summary["extractor"] = "heuristic_blocks"
+            return heuristic
 
     text = extract_pdf_text(full_path)
     summary["pdf_text_chars"] = len(text or "")
+    summary["extractor"] = "heuristic_text"
     return parse_products_from_text(text or "")
+
+
+def _try_claude_panel(full_path, job_id: int, summary: dict):
+    if not current_app.config.get("LLM_SUPERVISOR_ENABLED"):
+        return None
+    provider = (current_app.config.get("LLM_SUPERVISOR_PROVIDER") or "").lower()
+    model = current_app.config.get("LLM_SUPERVISOR_MODEL") or ""
+    api_key = current_app.config.get("LLM_SUPERVISOR_API_KEY") or ""
+    if provider != "anthropic" or not model or not api_key:
+        return None
+
+    dst = Path(current_app.config["PRODUCT_UPLOAD_FOLDER"])
+    prefix = f"job{job_id}"
+    try:
+        candidates, stats = extract_products_with_claude(
+            full_path, model=model, api_key=api_key,
+            dst_folder=dst, filename_prefix=prefix,
+        )
+        summary["extractor"] = "claude"
+        summary.update({f"claude_{k}": v for k, v in stats.items()})
+        return candidates
+    except ClaudePDFUnavailable as exc:
+        summary["claude_error"] = str(exc)[:240]
+        return None
