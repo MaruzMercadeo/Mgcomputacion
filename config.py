@@ -26,8 +26,16 @@ class Config:
     OCR_MIN_CHARS = int(os.getenv("OCR_MIN_CHARS", "20"))
     OCR_MAX_IMAGE_DIMENSION = int(os.getenv("OCR_MAX_IMAGE_DIMENSION", "2000"))
 
-    # LLM supervisor (escalation only when heuristics produce low-confidence results)
-    LLM_SUPERVISOR_ENABLED = os.getenv("LLM_SUPERVISOR_ENABLED", "false").lower() in ("1", "true", "yes")
-    LLM_SUPERVISOR_PROVIDER = os.getenv("LLM_SUPERVISOR_PROVIDER", "")  # e.g. "openai"
-    LLM_SUPERVISOR_MODEL = os.getenv("LLM_SUPERVISOR_MODEL", "")        # e.g. "gpt-5-nano"
-    LLM_SUPERVISOR_API_KEY = os.getenv("LLM_SUPERVISOR_API_KEY", "")
+    # LLM supervisor — supports multiple saved presets.
+    # Switch with LLM_SUPERVISOR_ACTIVE=1 | 2 | 3 | off (default: off).
+    # Each preset lives in its own set of LLM_SUPERVISOR<N>_* vars.
+    _active = (os.getenv("LLM_SUPERVISOR_ACTIVE", "") or "").strip().lower()
+    _suffix = "" if _active in ("", "off", "none", "0") else _active
+
+    LLM_SUPERVISOR_ENABLED = (
+        _active not in ("off", "none", "0")
+        and os.getenv(f"LLM_SUPERVISOR{_suffix}_ENABLED", "false").lower() in ("1", "true", "yes")
+    )
+    LLM_SUPERVISOR_PROVIDER = os.getenv(f"LLM_SUPERVISOR{_suffix}_PROVIDER", "")
+    LLM_SUPERVISOR_MODEL = os.getenv(f"LLM_SUPERVISOR{_suffix}_MODEL", "")
+    LLM_SUPERVISOR_API_KEY = os.getenv(f"LLM_SUPERVISOR{_suffix}_API_KEY", "")
