@@ -39,6 +39,9 @@ class ProductCandidate:
     image_path: str | None = None
     category: str | None = None
     subcategory: str | None = None
+    page_number: int | None = None
+    confidence: float | None = None
+    warnings: tuple[str, ...] = ()
 
 
 def parse_products_from_text(text: str) -> list[ProductCandidate]:
@@ -322,7 +325,64 @@ def _duplicate_reason(company_id: int, candidate: ProductCandidate) -> str | Non
 def _candidate_payload(candidate: ProductCandidate) -> str:
     data = asdict(candidate)
     data["price"] = str(candidate.price)
+    data["warnings"] = list(candidate.warnings)
     return json.dumps(data, ensure_ascii=False)
+
+
+def candidates_from_blocks(blocks) -> list[ProductCandidate]:
+    """Turn ProductBlocks (PDF visual catalog) into ProductCandidates.
+
+    Each block contributes at most one candidate. The block's image and page
+    metadata are propagated into the candidate so the draft keeps the crop.
+    If the block's text has no detectable product, a low-confidence candidate
+    is still emitted (name from the first line, price zero) so the user can
+    review it — never discard a cropped image silently.
+    """
+    candidates: list[ProductCandidate] = []
+    for block in blocks:
+        parsed = parse_products_from_text(block.text or "")
+        block_warnings = tuple(block.warnings)
+        if parsed:
+            for candidate in parsed:
+                enriched = ProductCandidate(
+                    name=candidate.name,
+                    price=candidate.price,
+                    description=candidate.description,
+                    sku=candidate.sku,
+                    stock=candidate.stock,
+                    image_path=block.image_path or candidate.image_path,
+                    category=candidate.category,
+                    subcategory=candidate.subcategory,
+                    page_number=block.page_number,
+                    confidence=max(block.confidence, 0.7),
+                    warnings=block_warnings,
+                )
+                candidates.append(enriched)
+            continue
+
+        fallback_name = _first_non_empty_line(block.text) or "Producto sin nombre"
+        candidates.append(
+            ProductCandidate(
+                name=fallback_name[:180],
+                price=Decimal("0"),
+                description=(block.text or "")[:1000],
+                sku=None,
+                stock=0,
+                image_path=block.image_path,
+                page_number=block.page_number,
+                confidence=block.confidence,
+                warnings=block_warnings + ("needs_review",),
+            )
+        )
+    return candidates
+
+
+def _first_non_empty_line(text: str) -> str:
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
 
 
 def stage_candidates_as_drafts(job: ImportJob, candidates: Iterable[ProductCandidate]) -> list[ImportItem]:

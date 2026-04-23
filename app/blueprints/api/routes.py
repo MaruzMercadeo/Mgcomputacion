@@ -12,8 +12,10 @@ from ...extensions import db
 from ...models import AgentSetting, Category, ImportItem, ImportJob, PdfUpload, Product
 from ...services.csv_parser import parse_products_from_csv
 from ...services.image_importer import build_candidates_from_image
+from ...services.pdf_blocks import PDFBlocksUnavailable, extract_product_blocks_from_pdf
 from ...services.pdf_parser import extract_pdf_text
 from ...services.product_importer import (
+    candidates_from_blocks,
     commit_drafts,
     import_products_from_text,
     parse_products_from_text,
@@ -333,8 +335,7 @@ def upload_import():
     summary: dict = {}
     try:
         if source == "pdf":
-            text = extract_pdf_text(full_path)
-            candidates = parse_products_from_text(text)
+            candidates = _pdf_candidates(full_path, company.id, job.id, summary)
         elif source == "csv":
             candidates = parse_products_from_csv(full_path)
         else:
@@ -415,3 +416,24 @@ def commit_import(job_id):
         "import_job": job.to_dict(),
         **result,
     })
+
+
+def _pdf_candidates(full_path, company_id: int, job_id: int, summary: dict):
+    """Try visual block extraction first; fall back to text-only parsing."""
+    dst_folder = Path(current_app.config["PRODUCT_UPLOAD_FOLDER"])
+    prefix = f"job{job_id}"
+    try:
+        blocks = extract_product_blocks_from_pdf(full_path, dst_folder, prefix)
+    except PDFBlocksUnavailable as exc:
+        summary["pdf_blocks_error"] = str(exc)
+        blocks = []
+
+    if blocks:
+        summary["pdf_blocks"] = len(blocks)
+        candidates = candidates_from_blocks(blocks)
+        if candidates:
+            return candidates
+
+    text = extract_pdf_text(full_path)
+    summary["pdf_text_chars"] = len(text or "")
+    return parse_products_from_text(text or "")

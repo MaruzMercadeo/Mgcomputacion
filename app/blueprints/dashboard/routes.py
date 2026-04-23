@@ -11,11 +11,15 @@ from flask_login import current_user
 from ...decorators import approved_required
 from ...extensions import db
 from ...models import AgentSetting, ApiKey, Category, ImportItem, ImportJob, PdfUpload, Product
+from ...services.csv_parser import parse_products_from_csv
 from ...services.image_importer import build_candidates_from_image
+from ...services.pdf_blocks import PDFBlocksUnavailable, extract_product_blocks_from_pdf
 from ...services.pdf_parser import extract_pdf_text
 from ...services.product_importer import (
+    candidates_from_blocks,
     commit_drafts,
     import_products_from_text,
+    parse_products_from_text,
     stage_candidates_as_drafts,
 )
 from ...utils import allowed_file, log_action, relative_pdf_path, relative_product_image_path, save_upload
@@ -355,16 +359,21 @@ def imports():
                 flash("No se pudo confirmar la importación.", "danger")
             return redirect(url_for("dashboard.imports"))
 
-        image = request.files.get("image")
-        if not image or not image.filename:
-            flash("Selecciona o captura una imagen.", "danger")
+        upload = request.files.get("file") or request.files.get("image")
+        if not upload or not upload.filename:
+            flash("Selecciona o captura un archivo.", "danger")
             return redirect(url_for("dashboard.imports"))
-        if not allowed_file(image.filename, current_app.config["ALLOWED_IMAGE_EXTENSIONS"]):
-            flash("Formato de imagen no permitido.", "danger")
+        if not allowed_file(upload.filename, current_app.config["ALLOWED_IMPORT_EXTENSIONS"]):
+            flash("Formato no permitido. Usa PDF, CSV o imagen.", "danger")
             return redirect(url_for("dashboard.imports"))
 
-        target_folder = Path(current_app.config["PRODUCT_UPLOAD_FOLDER"])
-        stored_filename = save_upload(image, target_folder)
+        source = _detect_source(upload.filename)
+        if not source:
+            flash("Formato no permitido.", "danger")
+            return redirect(url_for("dashboard.imports"))
+
+        target_folder = _target_folder_for(source)
+        stored_filename = save_upload(upload, target_folder)
         full_path = target_folder / stored_filename
         stored_path = str(full_path.relative_to(Path(current_app.root_path)))
         mode = (request.form.get("mode") or "").strip().lower() or None
@@ -372,48 +381,52 @@ def imports():
         job = ImportJob(
             company_id=company.id,
             user_id=current_user.id,
-            source="image",
+            source=source,
             status="processing",
-            original_filename=image.filename,
+            original_filename=upload.filename,
             stored_path=stored_path,
         )
         db.session.add(job)
         db.session.flush()
 
-        summary: dict = {}
+        summary: dict = {"mode": mode}
         try:
-            outcome = build_candidates_from_image(stored_filename, image.filename, full_path, mode=mode)
-            stage_candidates_as_drafts(job, outcome.candidates)
+            if source == "pdf":
+                candidates = _pdf_candidates_panel(full_path, job.id, summary)
+            elif source == "csv":
+                candidates = parse_products_from_csv(full_path)
+            else:
+                outcome = build_candidates_from_image(stored_filename, upload.filename, full_path, mode=mode)
+                candidates = outcome.candidates
+                summary.update({
+                    "ocr_chars": outcome.ocr_chars,
+                    "supervisor": outcome.supervisor,
+                    "used_supervisor": outcome.used_supervisor,
+                    "fallback_reason": outcome.fallback_reason,
+                })
+
+            stage_candidates_as_drafts(job, candidates)
             job.status = "ready"
-            summary = {
-                "detected": len(outcome.candidates),
-                "ocr_chars": outcome.ocr_chars,
-                "supervisor": outcome.supervisor,
-                "used_supervisor": outcome.used_supervisor,
-                "fallback_reason": outcome.fallback_reason,
-                "mode": mode,
-            }
+            summary["detected"] = len(candidates)
+            summary["source"] = source
             job.summary = json.dumps(summary)
             db.session.commit()
-            log_action("upload_image_import", entity_type="import_job", entity_id=job.id,
+            log_action("upload_import", entity_type="import_job", entity_id=job.id,
                        company_id=company.id, user_id=current_user.id)
-            if outcome.fallback_reason:
-                flash(f"Imagen guardada. Detectados {len(outcome.candidates)} borrador(es). Aviso: {outcome.fallback_reason}", "warning")
-            else:
-                flash(f"Imagen procesada. Detectados {len(outcome.candidates)} borrador(es).", "success")
+            flash(f"{source.upper()} procesado. Detectados {len(candidates)} borrador(es).", "success")
         except Exception:  # noqa: BLE001
             db.session.rollback()
             job.status = "failed"
-            job.summary = json.dumps({"error": "exception"})
+            job.summary = json.dumps({"error": "exception", "source": source})
             db.session.add(job)
             db.session.commit()
-            flash("No se pudo procesar la imagen.", "danger")
+            flash("No se pudo procesar el archivo.", "danger")
 
         return redirect(url_for("dashboard.imports"))
 
     jobs = (
         ImportJob.query
-        .filter_by(company_id=company.id, source="image")
+        .filter_by(company_id=company.id)
         .order_by(ImportJob.created_at.desc())
         .limit(25)
         .all()
@@ -462,3 +475,43 @@ def revoke_api_key(key_id):
     log_action("revoke_api_key", entity_type="api_key", entity_id=api_key.id, company_id=company.id, user_id=current_user.id)
     flash("API key revocada.", "info")
     return redirect(url_for("dashboard.api_keys"))
+
+
+def _detect_source(filename: str) -> str | None:
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext in current_app.config["ALLOWED_PDF_EXTENSIONS"]:
+        return "pdf"
+    if ext in current_app.config["ALLOWED_CSV_EXTENSIONS"]:
+        return "csv"
+    if ext in current_app.config["ALLOWED_IMAGE_EXTENSIONS"]:
+        return "image"
+    return None
+
+
+def _target_folder_for(source: str) -> Path:
+    if source == "image":
+        return Path(current_app.config["PRODUCT_UPLOAD_FOLDER"])
+    if source == "pdf":
+        return Path(current_app.config["PDF_UPLOAD_FOLDER"])
+    return Path(current_app.config["IMPORT_UPLOAD_FOLDER"])
+
+
+def _pdf_candidates_panel(full_path, job_id: int, summary: dict):
+    """Same strategy as the API: blocks first, text fallback."""
+    dst = Path(current_app.config["PRODUCT_UPLOAD_FOLDER"])
+    prefix = f"job{job_id}"
+    try:
+        blocks = extract_product_blocks_from_pdf(full_path, dst, prefix)
+    except PDFBlocksUnavailable as exc:
+        summary["pdf_blocks_error"] = str(exc)
+        blocks = []
+
+    if blocks:
+        summary["pdf_blocks"] = len(blocks)
+        candidates = candidates_from_blocks(blocks)
+        if candidates:
+            return candidates
+
+    text = extract_pdf_text(full_path)
+    summary["pdf_text_chars"] = len(text or "")
+    return parse_products_from_text(text or "")

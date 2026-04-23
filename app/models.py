@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from decimal import Decimal
 from hashlib import sha256
@@ -266,6 +267,13 @@ class ImportItem(TimestampMixin, db.Model):
 
     job = db.relationship("ImportJob", back_populates="items")
     product = db.relationship("Product", foreign_keys=[product_id])
+
+    @property
+    def payload_dict(self) -> dict:
+        try:
+            return json.loads(self.payload or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return {}
 
     def to_dict(self) -> dict:
         return {

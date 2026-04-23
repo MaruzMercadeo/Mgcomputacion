@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block title %}Imágenes | MGComputacion{% endblock %}
+{% block title %}Importar | MGComputacion{% endblock %}
 {% block content %}
 <section class="dashboard-shell container">
   <div class="dashboard-grid">
@@ -7,24 +7,24 @@
     <div class="dashboard-main">
       <div class="panel">
         <div class="section-header">
-          <h1>Importar desde imagen</h1>
-          <p>Subí una foto de una etiqueta, lista o catálogo. El sistema aplica OCR local y genera borradores de productos para revisar.</p>
+          <h1>Importar catálogo</h1>
+          <p>Subí un catálogo en PDF, una planilla CSV o una foto. El sistema detecta el tipo y genera borradores de productos.</p>
         </div>
 
         <form method="post" enctype="multipart/form-data" class="form-grid compact-form">
           <label>
-            <span>Imagen (archivo o cámara)</span>
-            <input type="file" name="image" accept="image/*" capture="environment" required>
+            <span>Archivo (PDF, CSV o imagen — también podés usar la cámara)</span>
+            <input type="file" name="file" accept=".pdf,.csv,image/*" capture="environment" required>
           </label>
           <label>
             <span>Modo</span>
             <select name="mode">
-              <option value="">Estándar (OCR local)</option>
-              <option value="advanced">Avanzado (supervisión)</option>
+              <option value="">Estándar (OCR local + heurística)</option>
+              <option value="advanced">Avanzado (supervisión LLM si está habilitada)</option>
             </select>
           </label>
           <div>
-            <button class="btn btn-primary" type="submit">Subir imagen</button>
+            <button class="btn btn-primary" type="submit">Subir archivo</button>
           </div>
         </form>
       </div>
@@ -38,7 +38,7 @@
           <div class="stack-card">
             <div class="stack-card-header">
               <strong>{{ job.original_filename }}</strong>
-              <span class="status-badge status-{{ 'approved' if job.status in ['ready', 'committed'] else 'warning' }}">{{ job.status }}</span>
+              <span class="status-badge status-{{ 'approved' if job.status in ['ready', 'committed'] else 'warning' }}">{{ job.source }} · {{ job.status }}</span>
             </div>
             <p class="muted small">{{ job.created_at.strftime('%Y-%m-%d %H:%M') }} · {{ items_by_job[job.id] | length }} borrador(es)</p>
             {% if job.summary %}
@@ -47,12 +47,22 @@
 
             {% set drafts = items_by_job[job.id] | selectattr('status', 'equalto', 'draft') | list %}
             {% if drafts %}
-              <ul class="muted small" style="margin:0 0 .5rem 1rem;">
-                {% for item in drafts[:5] %}
-                  <li>{{ item.payload[:140] }}{% if item.payload|length > 140 %}…{% endif %}</li>
+              <div class="draft-grid" style="display:flex;flex-wrap:wrap;gap:.75rem;margin:.5rem 0;">
+                {% for item in drafts[:12] %}
+                  {% set payload = item.payload_dict %}
+                  <div class="draft-chip" style="display:flex;gap:.5rem;align-items:center;padding:.5rem;border:1px solid #2a2a2a;border-radius:6px;max-width:280px;">
+                    {% if payload.image_path %}
+                      <img src="{{ url_for('static', filename=payload.image_path) }}" alt="preview" style="width:48px;height:48px;object-fit:cover;border-radius:4px;">
+                    {% endif %}
+                    <div style="min-width:0;">
+                      <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;">{{ payload.name or 'sin nombre' }}</div>
+                      <div class="muted small">{{ payload.price or '0' }} · {{ payload.sku or 's/sku' }}{% if payload.page_number %} · p.{{ payload.page_number }}{% endif %}</div>
+                      {% if payload.warnings %}<div class="muted small" style="color:#c7a04a;">{{ payload.warnings | join(', ') }}</div>{% endif %}
+                    </div>
+                  </div>
                 {% endfor %}
-                {% if drafts|length > 5 %}<li>+ {{ drafts|length - 5 }} más</li>{% endif %}
-              </ul>
+                {% if drafts|length > 12 %}<span class="muted small">+ {{ drafts|length - 12 }} más</span>{% endif %}
+              </div>
               <form method="post" style="display:inline;">
                 <input type="hidden" name="action" value="commit">
                 <input type="hidden" name="job_id" value="{{ job.id }}">
@@ -63,7 +73,7 @@
             {% endif %}
           </div>
           {% else %}
-          <p class="muted">Todavía no hay importaciones desde imagen.</p>
+          <p class="muted">Todavía no hay importaciones.</p>
           {% endfor %}
         </div>
       </div>

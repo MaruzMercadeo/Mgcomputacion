@@ -51,6 +51,8 @@ def build_candidates_from_image(
 
     candidates = parse_products_from_text(ocr.text) if ocr.text else []
     candidates = [_attach_image(c, relative_image) for c in candidates]
+    if len(candidates) > 1:
+        candidates = [_tag_uncropped(c) for c in candidates]
 
     supervisor = get_supervisor()
     used_supervisor = False
@@ -88,9 +90,16 @@ def build_candidates_from_image(
 
 
 def _attach_image(candidate: ProductCandidate, relative_image: str) -> ProductCandidate:
-    if candidate.image_path:
+    data = dict(page_number=candidate.page_number or 1)
+    if not candidate.image_path:
+        data["image_path"] = relative_image
+    return replace(candidate, **data)
+
+
+def _tag_uncropped(candidate: ProductCandidate) -> ProductCandidate:
+    if "image_not_cropped" in candidate.warnings:
         return candidate
-    return replace(candidate, image_path=relative_image)
+    return replace(candidate, warnings=candidate.warnings + ("image_not_cropped",))
 
 
 def _placeholder_outcome(
