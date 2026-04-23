@@ -154,5 +154,89 @@ def register_commands(app):
     app.cli.add_command(init_db_command)
     app.cli.add_command(upgrade_db_command)
     app.cli.add_command(llm_ping_command)
+    app.cli.add_command(pdf_probe_command)
     app.cli.add_command(seed_admin_command)
     app.cli.add_command(generate_api_key_command)
+
+
+@click.command("pdf-probe")
+@click.argument("pdf_path")
+@with_appcontext
+def pdf_probe_command(pdf_path):
+    """Envía un PDF al supervisor Claude activo y muestra el JSON crudo que devuelve.
+
+    Uso: flask --app run.py pdf-probe ruta\\al\\catalogo.pdf
+    """
+    from pathlib import Path
+
+    from flask import current_app
+
+    from .services.claude_pdf_extractor import ClaudePDFUnavailable, extract_products_with_claude
+
+    provider = (current_app.config.get("LLM_SUPERVISOR_PROVIDER") or "").lower()
+    model = current_app.config.get("LLM_SUPERVISOR_MODEL") or ""
+    api_key = current_app.config.get("LLM_SUPERVISOR_API_KEY") or ""
+    active = current_app.config.get("LLM_SUPERVISOR_ACTIVE") or "(vacío)"
+
+    click.echo("=== Config ===")
+    click.echo(f"  ACTIVE:   {active}")
+    click.echo(f"  provider: {provider!r}")
+    click.echo(f"  model:    {model!r}")
+    click.echo(f"  api_key:  {'***' + api_key[-6:] if api_key else '(vacío)'}")
+
+    if provider != "anthropic":
+        click.echo(f"\n✗ El supervisor activo no es anthropic. Poné LLM_SUPERVISOR_ACTIVE=1 (Haiku) en .env.")
+        return
+    if not model or not api_key:
+        click.echo("\n✗ Falta model o api_key. Revisá el preset activo en .env.")
+        return
+
+    path = Path(pdf_path)
+    if not path.exists():
+        click.echo(f"\n✗ No existe el archivo: {path}")
+        return
+
+    size_mb = path.stat().st_size / 1024 / 1024
+    click.echo(f"\nPDF: {path}  ({size_mb:.2f} MB)")
+    click.echo("Enviando a Claude... (puede tardar 10-60s)")
+
+    try:
+        candidates, stats = extract_products_with_claude(
+            path, model=model, api_key=api_key,
+            dst_folder=None, filename_prefix="probe",
+        )
+    except ClaudePDFUnavailable as exc:
+        click.echo(f"\n✗ FALLÓ la llamada a Claude: {exc}")
+        click.echo("\nCausas típicas:")
+        click.echo("  - API key inválida o sin saldo (HTTP 401/402)")
+        click.echo("  - PDF demasiado grande (>30 MB)")
+        click.echo("  - Rate limit (HTTP 429) — esperá unos segundos")
+        click.echo("  - Sin conexión a internet")
+        return
+
+    click.echo(f"\n✓ Claude respondió.")
+    click.echo(f"  input_tokens:  {stats.get('input_tokens', 0)}")
+    click.echo(f"  output_tokens: {stats.get('output_tokens', 0)}")
+    click.echo(f"  productos detectados: {stats.get('detected', 0)}")
+    cost = stats.get("input_tokens", 0) / 1_000_000 + stats.get("output_tokens", 0) * 5 / 1_000_000
+    click.echo(f"  costo aprox:   ${cost:.4f}")
+
+    if not candidates:
+        click.echo("\n⚠ Claude respondió pero no detectó ningún producto en este PDF.")
+        return
+
+    with_price = sum(1 for c in candidates if c.price > 0)
+    without_price = len(candidates) - with_price
+    click.echo(f"\nResumen: {with_price} con precio, {without_price} con precio 0/null")
+
+    click.echo("\n--- Primeros 15 productos ---")
+    for idx, c in enumerate(candidates[:15], start=1):
+        click.echo(
+            f"  [{idx}] name={c.name!r}"
+        )
+        click.echo(
+            f"       sku={c.sku!r}  price={c.price}  page={c.page_number}  "
+            f"conf={c.confidence}  warnings={list(c.warnings)}"
+        )
+    if len(candidates) > 15:
+        click.echo(f"  ... y {len(candidates) - 15} más")
