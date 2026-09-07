@@ -48,8 +48,11 @@ pip install -r requirements.txt
 cp .env.example .env
 flask --app run.py init-db
 flask --app run.py seed-admin --email admin@mg.local --password Admin123! --name "Administrador"
-flask --app run.py run --host 0.0.0.0 --port 5000
+python run.py
 ```
+
+Con `HOST=0.0.0.0` (valor por defecto) la app queda visible para el resto de
+equipos de tu red local. Ver la seccion 12.
 
 ## 4. Usuario administrador
 
@@ -165,3 +168,98 @@ Recomendado:
 - Las imágenes de productos se suben a `app/static/uploads/products/`
 - Los PDFs se suben a `app/static/uploads/pdfs/`
 - La importación de PDF está en fase base con extracción de texto y preview
+
+## 12. Acceso desde la red local (LAN)
+
+Para entrar desde otro equipo, celular o tablet de la misma red hacia el Ubuntu
+donde corre la app.
+
+### 12.1 Levantar el servidor
+
+```bash
+./scripts/serve-lan.sh          # gunicorn, recomendado
+./scripts/serve-lan.sh --dev    # servidor de desarrollo de Flask
+PORT=8080 ./scripts/serve-lan.sh
+```
+
+El script activa `venv` si existe, muestra la IP local, avisa si `ufw` bloquea el
+puerto y levanta el servidor en `0.0.0.0`.
+
+Tambien sirve `python run.py`, que lee `HOST` y `PORT` del `.env`.
+
+### 12.2 Averiguar la IP del Ubuntu
+
+```bash
+hostname -I
+# o
+ip -4 addr show scope global | grep inet
+```
+
+Suele ser algo como `192.168.1.45`. Desde otro equipo de la red:
+
+```text
+http://192.168.1.45:5555
+```
+
+### 12.3 Abrir el puerto en el firewall
+
+Si `ufw` esta activo:
+
+```bash
+sudo ufw status
+sudo ufw allow 5555/tcp
+```
+
+Para permitir solo tu subred en lugar de todo:
+
+```bash
+sudo ufw allow from 192.168.1.0/24 to any port 5555 proto tcp
+```
+
+### 12.4 Si no conecta
+
+1. Confirma que el servidor dice `0.0.0.0` y no `127.0.0.1`.
+2. Comprueba que el puerto escucha: `ss -lntp | grep 5555`.
+3. Prueba desde el propio Ubuntu con su IP de red: `curl http://192.168.1.45:5555`.
+   - Si responde ahi pero no desde otro equipo, es firewall o aislamiento del router.
+4. Verifica que ambos equipos esten en la misma red y que el router no tenga
+   activado el aislamiento de clientes (AP isolation / red de invitados).
+5. Si el Ubuntu esta en WSL o en una VM con NAT, necesitas reenvio de puertos o
+   red en modo puente.
+
+### 12.5 Seguridad
+
+- La app quedara accesible para cualquier equipo de la red. Usa contrasenas
+  reales, no las de ejemplo, y cambia `SECRET_KEY`.
+- No pongas `FLASK_DEBUG=1` con `HOST=0.0.0.0`: el depurador de Werkzeug permite
+  ejecutar codigo desde el navegador. Por eso `run.py` activa debug por defecto
+  solo cuando `HOST` es `127.0.0.1`.
+- Para acceso permanente, usa gunicorn detras de nginx y un servicio de systemd
+  en vez de dejar una terminal abierta.
+- Esto es solo red local. Para acceso desde internet necesitas dominio, HTTPS y
+  reenvio de puertos en el router, no expongas esto tal cual.
+
+### 12.6 Servicio systemd (opcional)
+
+```ini
+# /etc/systemd/system/mgcomputacion.service
+[Unit]
+Description=MGComputacion Platform
+After=network.target
+
+[Service]
+User=TU_USUARIO
+WorkingDirectory=/ruta/a/Mgcomputacion
+Environment="PATH=/ruta/a/Mgcomputacion/venv/bin"
+ExecStart=/ruta/a/Mgcomputacion/venv/bin/gunicorn --bind 0.0.0.0:5555 --workers 3 run:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now mgcomputacion
+sudo systemctl status mgcomputacion
+```
